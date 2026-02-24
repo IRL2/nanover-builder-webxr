@@ -4,12 +4,16 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host --open",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview --host --open"
   },
   "devDependencies": {
+    "@types/three": "^0.183.1",
     "typescript": "~5.9.3",
     "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "three": "^0.183.1"
   }
 }

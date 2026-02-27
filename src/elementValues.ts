@@ -3,18 +3,19 @@ interface elementData {
     color: number;
     valence: number;
     steric: number;
+    vdwRadius: number;
 }
 
 export const ELEMENTS: Record<string, elementData> = {
-    H:  { name: 'Hydrogen',   color: 0xffffff, valence: 1, steric: 1 },
-    B:  { name: 'Boron',      color: 0xffa500, valence: 3, steric: 3 },
-    C:  { name: 'Carbon',     color: 0x252525, valence: 4, steric: 4 },
-    N:  { name: 'Nitrogen',   color: 0x0000ff, valence: 3, steric: 4 },
-    O:  { name: 'Oxygen',     color: 0xff0000, valence: 2, steric: 4 },
-    F:  { name: 'Fluorine',   color: 0x00ff00, valence: 1, steric: 4 },
-    Cl: { name: 'Chlorine',   color: 0x00ff00, valence: 1, steric: 4 },
-    S:  { name: 'Sulfur',     color: 0xffff00, valence: 2, steric: 4 },
-    P:  { name: 'Phosphorus', color: 0xff8c00, valence: 3, steric: 4 },
+    H:  { name: 'Hydrogen',   color: 0xffffff, valence: 1, steric: 1, vdwRadius: 0.110 },
+    B:  { name: 'Boron',      color: 0xffa500, valence: 3, steric: 3, vdwRadius: 0.192 },
+    C:  { name: 'Carbon',     color: 0x252525, valence: 4, steric: 4, vdwRadius: 0.170 },
+    N:  { name: 'Nitrogen',   color: 0x0000ff, valence: 3, steric: 4, vdwRadius: 0.155 },
+    O:  { name: 'Oxygen',     color: 0xff0000, valence: 2, steric: 4, vdwRadius: 0.152 },
+    F:  { name: 'Fluorine',   color: 0x00ff00, valence: 1, steric: 4, vdwRadius: 0.147 },
+    Cl: { name: 'Chlorine',   color: 0x00ff00, valence: 1, steric: 4, vdwRadius: 0.175 },
+    S:  { name: 'Sulfur',     color: 0xffff00, valence: 2, steric: 4, vdwRadius: 0.180 },
+    P:  { name: 'Phosphorus', color: 0xff8c00, valence: 3, steric: 4, vdwRadius: 0.180 },
 }
 
 // Ideal bond lengths in angstroms.
@@ -44,7 +45,20 @@ export const BOND_LENGTHS: Record<string, number> = {
     'N-S-2': 1.5
 };
 
-export function getBondLength( element1: string, element2: string, bondOrder: number ): number {
-    const key1 = `${element1}-${element2}-${bondOrder}`
-    const key2 = `${element2}-${element1}-${bondOrder}`
-    return BOND_LENGTHS[key1] || BOND_LENGTHS[key2] || 1.5}
+
+export function getBondLength(element1: string, element2: string, bondOrder: number): number {
+    const [a, b] = element1 <= element2 ? [element1, element2] : [element2, element1];
+
+    const exact = BOND_LENGTHS[`${a}-${b}-${bondOrder}`]
+               ?? BOND_LENGTHS[`${b}-${a}-${bondOrder}`];
+    if (exact !== undefined) return exact;
+
+    // derive from single-bond length
+    const single = BOND_LENGTHS[`${a}-${b}-1`]
+                ?? BOND_LENGTHS[`${b}-${a}-1`];
+    if (single !== undefined) {
+        return single - Math.log(bondOrder) / single;
+    }
+
+    return 1.5;
+}

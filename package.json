@@ -14,6 +14,7 @@
     "vite": "^7.3.1"
   },
   "dependencies": {
+    "@pmndrs/uikit": "^1.0.62",
     "three": "^0.183.1"
   }
 }

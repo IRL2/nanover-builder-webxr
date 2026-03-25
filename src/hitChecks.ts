@@ -54,3 +54,24 @@ export function sortedPositionsByDistance(point: THREE.Vector3, positions: THREE
         .sort((a, b) => a.d - b.d)
         .map(x => x.i);
 }
+
+
+export function findNearestAtom(
+    position: THREE.Vector3,
+    atoms: Atom[],
+    maxDistance: number
+): Atom | null {
+    let nearest: Atom | null = null;
+    let nearestDist = maxDistance;
+
+    for (const atom of atoms) {
+        const dist = position.distanceTo(atom.position);
+        const effectiveDist = dist - atom.scale * 0.3;
+        if (effectiveDist < nearestDist) {
+            nearestDist = effectiveDist;
+            nearest = atom;
+        }
+    }
+
+    return nearest;
+}

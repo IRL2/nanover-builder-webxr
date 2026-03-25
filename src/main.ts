@@ -6,7 +6,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Atom, MolecularStructure } from './molecularData.js';
 import { calculateGuidelines, emptyBondNumber } from './guidelines.js';
 import type { GuidelineData } from './guidelines.js';
-import { biasedSortedBondOverlapForNew, sortedPositionsByDistance } from './hitChecks.js';
+import { biasedSortedBondOverlapForNew, sortedPositionsByDistance, findNearestAtom } from './hitChecks.js';
 import { createElementSelector, getSelectedElement, updateElementSelector } from './elementSelector.js';
 import { downloadPDB } from './exportPDB.js';
 import GUI from 'lil-gui';
@@ -37,6 +37,17 @@ const guidelineGeometry = new THREE.SphereGeometry(1, 12, 8);
 const ghostMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, depthWrite: false });
 const guideValidMat = new THREE.MeshStandardMaterial({ color: 0x44ff44, transparent: true, opacity: 0.35, depthWrite: false });
 const guideInvalidMat = new THREE.MeshStandardMaterial({ color: 0xff4444, transparent: true, opacity: 0.35, depthWrite: false });
+const deleteHighlightMat = new THREE.MeshStandardMaterial({ color: 0xff0000, transparent: true, opacity: 0.6, depthWrite: false });
+const deleteHighlightGroup = new THREE.Group();
+const simulationSpace = new THREE.Group();
+
+interface SqueezeGestureState {
+    active: boolean;
+    initialDistance: number;
+    initialMidpoint: THREE.Vector3;
+    initialControllerDir: THREE.Vector3;
+    initialSimulationSpaceMatrix: THREE.Matrix4;
+}
 
 init();
 
@@ -74,8 +85,12 @@ function init() {
 
     document.body.appendChild(XRButton.createButton(renderer));
 
-    scene.add(atomGroup);
-    scene.add(bondGroup);
+    // simulation space hierarchy
+    simulationSpace.add(atomGroup);
+    simulationSpace.add(bondGroup);
+    simulationSpace.add(deleteHighlightGroup);
+
+    scene.add(simulationSpace);
     scene.add(ghostGroup);
     scene.add(guidelineGroup);
 
@@ -89,6 +104,13 @@ function init() {
 }
 
 // --- XR CONTROLLERS ---
+const squeezeState: SqueezeGestureState = {
+    active: false,
+    initialDistance: 0,
+    initialMidpoint: new THREE.Vector3(),
+    initialControllerDir: new THREE.Vector3(),
+    initialSimulationSpaceMatrix: new THREE.Matrix4(),
+};
 
 function setupXRControllers() {
     function onSelectStart(this: THREE.XRTargetRaySpace) { this.userData.isSelecting = true; }
@@ -100,29 +122,49 @@ function setupXRControllers() {
     function onSelectStartRight(this: THREE.XRTargetRaySpace) { this.userData.isSelecting = true; }
     function onSelectEndRight(this: THREE.XRTargetRaySpace) {
         this.userData.isSelecting = false;
-        // TODO: right trigger delete action under cursor
+        const worldPos = this.userData.lastWorldPos as THREE.Vector3;
+        if (worldPos) {
+            removeAtomAtPosition(worldPos);
+        }
+    }
+
+    function onSqueezeStart(this: THREE.XRTargetRaySpace) {
+        this.userData.isSqueezing = true;
+        checkStartTwoHandGesture();
+    }
+    function onSqueezeEnd(this: THREE.XRTargetRaySpace) {
+        this.userData.isSqueezing = false;
+        endTwoHandGesture();
     }
 
     controller1 = renderer.xr.getController(0);
     controller1.addEventListener('selectstart', onSelectStart);
     controller1.addEventListener('selectend', onSelectEnd);
+    controller1.addEventListener('squeezestart', onSqueezeStart);
+    controller1.addEventListener('squeezeend', onSqueezeEnd);
     controller1.userData.id = 0;
     scene.add(controller1);
 
     controller2 = renderer.xr.getController(1);
     controller2.addEventListener('selectstart', onSelectStartRight);
     controller2.addEventListener('selectend', onSelectEndRight);
+    controller2.addEventListener('squeezestart', onSqueezeStart);
+    controller2.addEventListener('squeezeend', onSqueezeEnd);
     controller2.userData.id = 1;
     scene.add(controller2);
 
-    const pivot = new THREE.Mesh(new THREE.IcosahedronGeometry(0.01, 3), new THREE.MeshBasicMaterial({ visible: false }));
-    pivot.name = 'pivot';
-    pivot.position.z = -0.05;
-
-    const group = new THREE.Group();
-    group.add(pivot);
-    controller1.add(group.clone());
-    controller2.add(group.clone());
+    const pivotGeom = new THREE.IcosahedronGeometry(0.01, 3);
+    const pivotMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    
+    const pivot1 = new THREE.Mesh(pivotGeom, pivotMat);
+    pivot1.name = 'pivot';
+    pivot1.position.set(-0.02, 0, -0.1);
+    controller1.add(pivot1);
+    
+    const pivot2 = new THREE.Mesh(pivotGeom, pivotMat);
+    pivot2.name = 'pivot';
+    pivot2.position.set(0.02, 0, -0.1);
+    controller2.add(pivot2);
 
     const modelFactory = new XRControllerModelFactory();
 
@@ -137,17 +179,124 @@ function setupXRControllers() {
     createElementSelector(controller2, renderer);
 }
 
+// --- TWO-HAND SQUEEZE GESTURE (Scale/Rotate) ---
+
+function checkStartTwoHandGesture() {
+    if (controller1.userData.isSqueezing && controller2.userData.isSqueezing) {
+        const pos1 = getControllerWorldPos(controller1);
+        const pos2 = getControllerWorldPos(controller2);
+        if (!pos1 || !pos2) return;
+
+        squeezeState.active = true;
+        squeezeState.initialDistance = pos1.distanceTo(pos2);
+        squeezeState.initialMidpoint = pos1.clone().add(pos2).multiplyScalar(0.5);
+        squeezeState.initialControllerDir = pos2.clone().sub(pos1).normalize();
+        squeezeState.initialSimulationSpaceMatrix = simulationSpace.matrix.clone();
+    }
+}
+
+function endTwoHandGesture() {
+    squeezeState.active = false;
+}
+
+function updateTwoHandGesture() {
+    if (!squeezeState.active) return;
+
+    const pos1 = getControllerWorldPos(controller1);
+    const pos2 = getControllerWorldPos(controller2);
+    if (!pos1 || !pos2) return;
+
+    const currentDistance = pos1.distanceTo(pos2);
+    const currentMidpoint = pos1.clone().add(pos2).multiplyScalar(0.5);
+    const currentDir = pos2.clone().sub(pos1).normalize();
+
+    const scaleFactor = squeezeState.initialDistance > 0.01
+        ? currentDistance / squeezeState.initialDistance
+        : 1;
+
+    const rotationQuat = new THREE.Quaternion().setFromUnitVectors(
+        squeezeState.initialControllerDir,
+        currentDir
+    );
+
+    simulationSpace.matrix.copy(squeezeState.initialSimulationSpaceMatrix);
+    simulationSpace.matrixAutoUpdate = false;
+
+    const tempMatrix = new THREE.Matrix4();
+
+    tempMatrix.makeTranslation(
+        -squeezeState.initialMidpoint.x,
+        -squeezeState.initialMidpoint.y,
+        -squeezeState.initialMidpoint.z
+    );
+    simulationSpace.matrix.premultiply(tempMatrix);
+
+    tempMatrix.makeScale(scaleFactor, scaleFactor, scaleFactor);
+    simulationSpace.matrix.premultiply(tempMatrix);
+
+    tempMatrix.makeRotationFromQuaternion(rotationQuat);
+    simulationSpace.matrix.premultiply(tempMatrix);
+
+    tempMatrix.makeTranslation(currentMidpoint.x, currentMidpoint.y, currentMidpoint.z);
+    simulationSpace.matrix.premultiply(tempMatrix);
+
+    simulationSpace.matrix.decompose(simulationSpace.position, simulationSpace.quaternion, simulationSpace.scale);
+}
+
+// --- ATOM REMOVAL ---
+
+function removeAtomAtPosition(worldPos: THREE.Vector3) {
+    const simPos = worldToSimulationSpace(worldPos);
+    const atom = findNearestAtom(simPos, molecule.atoms, 0.08);
+    if (atom) {
+        molecule.removeAtom(atom);
+        rebuildVisuals();
+    }
+}
+
+function updateDeleteHighlight(cursorPos: THREE.Vector3 | null) {
+    deleteHighlightGroup.clear();
+
+    if (!cursorPos) return;
+
+    const simPos = worldToSimulationSpace(cursorPos);
+    const atom = findNearestAtom(simPos, molecule.atoms, 0.08);
+    if (!atom) return;
+
+    const highlightMesh = new THREE.Mesh(atomGeometry, deleteHighlightMat);
+    highlightMesh.position.copy(atom.position);
+    highlightMesh.scale.setScalar(atom.scale / 2 * 1.3);
+    deleteHighlightGroup.add(highlightMesh);
+
+    for (const bond of atom.bonds) {
+        const other = bond.a === atom ? bond.b : bond.a;
+        const start = atom.position;
+        const end = other.position;
+        const mid = start.clone().add(end).multiplyScalar(0.5);
+        const dir = end.clone().sub(start);
+        const len = dir.length();
+        const bondRadius = Math.max(atom.scale, other.scale) * BOND_SCALE * 1.3;
+
+        const cyl = new THREE.Mesh(bondGeometry, deleteHighlightMat);
+        cyl.position.copy(mid);
+        cyl.scale.set(bondRadius, len, bondRadius);
+        cyl.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+        deleteHighlightGroup.add(cyl);
+    }
+}
+
 // --- ELEMENT PLACEMENT ---
 
 function placeAtom(worldPos: THREE.Vector3) {
     if (!worldPos) return;
+    const simPos = worldToSimulationSpace(worldPos);
 
     const el = getSelectedElement();
-    const nearby = biasedSortedBondOverlapForNew(el, worldPos, molecule.atoms);
+    const nearby = biasedSortedBondOverlapForNew(el, simPos, molecule.atoms);
 
-    let finalPos = worldPos.clone();
+    let finalPos = simPos.clone();
     if (nearby.length > 0) {
-        finalPos = snapToGuideline(el, worldPos, nearby);
+        finalPos = snapToGuideline(el, simPos, nearby);
     }
 
     const newAtom = molecule.addAtom(el, finalPos);
@@ -250,35 +399,37 @@ function updateGhostPreview(cursorPos: THREE.Vector3) {
 
     if (!cursorPos) return;
 
+    const simCursorPos = worldToSimulationSpace(cursorPos);
+
     const el = getSelectedElement();
-    const nearby = biasedSortedBondOverlapForNew(el, cursorPos, molecule.atoms);
+    const nearby = biasedSortedBondOverlapForNew(el, simCursorPos, molecule.atoms);
     let ghostPos = cursorPos.clone();
     let guidelines: GuidelineData[] = [];
 
     if (nearby.length > 0) {
-        guidelines = calculateGuidelines(nearby, el, cursorPos);
-        ghostPos = snapToGuideline(el, cursorPos, nearby);
+        guidelines = calculateGuidelines(nearby, el, simCursorPos);
+        const snappedSimPos = snapToGuideline(el, simCursorPos, nearby);
+        ghostPos = simulationToWorldSpace(snappedSimPos);
     }
 
-    // ghost atom sphere
     const tempAtom = new Atom(el, ghostPos);
     const ghostColor = new THREE.Color(tempAtom.color);
     const ghostMat = ghostMaterial.clone();
     ghostMat.color = ghostColor;
     const ghostMesh = new THREE.Mesh(atomGeometry, ghostMat);
     ghostMesh.position.copy(ghostPos);
-    ghostMesh.scale.setScalar(tempAtom.scale / 2);
+    ghostMesh.scale.setScalar(tempAtom.scale / 2 * simulationSpace.scale.x);
     ghostGroup.add(ghostMesh);
 
     // ghost bonds
     for (const target of nearby) {
         if (target.emptyBonds <= 0) continue;
         const start = ghostPos;
-        const end = target.position;
+        const end = simulationToWorldSpace(target.position);
         const mid = start.clone().add(end).multiplyScalar(0.5);
         const dir = end.clone().sub(start);
         const len = dir.length();
-        const bondRadius = Math.max(tempAtom.scale, target.scale) * BOND_SCALE;
+        const bondRadius = Math.max(tempAtom.scale, target.scale) * BOND_SCALE * simulationSpace.scale.x;
 
         const lineMat = ghostMaterial.clone();
         lineMat.color = ghostColor;
@@ -293,10 +444,10 @@ function updateGhostPreview(cursorPos: THREE.Vector3) {
     for (const gd of guidelines) {
         const valid = emptyBondNumber(gd.core) > 0;
         const mat = valid ? guideValidMat : guideInvalidMat;
-        const guideRadius = gd.core.scale * BOND_SCALE * 0.8;
+        const guideRadius = gd.core.scale * BOND_SCALE * 0.8 * simulationSpace.scale.x;
         for (const pos of gd.positions) {
             const sphere = new THREE.Mesh(guidelineGeometry, mat);
-            sphere.position.copy(pos);
+            sphere.position.copy(simulationToWorldSpace(pos));
             sphere.scale.setScalar(guideRadius);
             guidelineGroup.add(sphere);
         }
@@ -308,6 +459,20 @@ function getControllerWorldPos(controller: THREE.XRTargetRaySpace): THREE.Vector
     const pivot = controller.getObjectByName('pivot');
     if (!pivot) return null;
     return new THREE.Vector3().setFromMatrixPosition(pivot.matrixWorld);
+}
+
+// convert world position to simulation space 
+const _inverseMatrix = new THREE.Matrix4();
+function worldToSimulationSpace(worldPos: THREE.Vector3): THREE.Vector3 {
+    simulationSpace.updateMatrixWorld(true);
+    _inverseMatrix.copy(simulationSpace.matrixWorld).invert();
+    return worldPos.clone().applyMatrix4(_inverseMatrix);
+}
+
+// convert simulation space position to world
+function simulationToWorldSpace(simPos: THREE.Vector3): THREE.Vector3 {
+    simulationSpace.updateMatrixWorld(true);
+    return simPos.clone().applyMatrix4(simulationSpace.matrixWorld);
 }
 
 function onWindowResize() {
@@ -329,16 +494,20 @@ function animate(_timestamp: DOMHighResTimeStamp, frame?: XRFrame) {
 
     updateElementSelector(session, 1, delta);
 
+    updateTwoHandGesture();
+
     for (const ctrl of [controller1, controller2]) {
         const pos = getControllerWorldPos(ctrl);
         if (pos) {
             ctrl.userData.lastWorldPos = pos;
             if (session && ctrl === controller1) updateGhostPreview(pos);
+            if (session && ctrl === controller2) updateDeleteHighlight(pos);
         }
     }
     if (!session) {
         ghostGroup.clear();
         guidelineGroup.clear();
+        deleteHighlightGroup.clear();
     }
 
     renderer.render(scene, camera);

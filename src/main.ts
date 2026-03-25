@@ -2,11 +2,14 @@ import './style.css';
 import * as THREE from 'three';
 import { XRButton } from 'three/addons/webxr/XRButton.js';
 import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Atom, MolecularStructure } from './molecularData.js';
 import { calculateGuidelines, emptyBondNumber } from './guidelines.js';
 import type { GuidelineData } from './guidelines.js';
 import { biasedSortedBondOverlapForNew, sortedPositionsByDistance } from './hitChecks.js';
 import { createElementSelector, getSelectedElement, updateElementSelector } from './elementSelector.js';
+import { downloadPDB } from './exportPDB.js';
+import GUI from 'lil-gui';
 
 // --- STATE ---
 
@@ -19,6 +22,7 @@ let scene: THREE.Scene;
 let renderer: THREE.WebGLRenderer;
 let controller1: THREE.XRTargetRaySpace;
 let controller2: THREE.XRTargetRaySpace;
+let controls: OrbitControls;
 
 // Groups for rendering
 const atomGroup = new THREE.Group();
@@ -64,6 +68,10 @@ function init() {
     renderer.xr.enabled = true;
     container.appendChild(renderer.domElement);
 
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 1.2, 0);
+    controls.update();
+
     document.body.appendChild(XRButton.createButton(renderer));
 
     scene.add(atomGroup);
@@ -74,6 +82,10 @@ function init() {
     setupXRControllers();
 
     window.addEventListener('resize', onWindowResize);
+
+    // GUI
+    const gui = new GUI();
+    gui.add({ exportPDB: () => downloadPDB(molecule) }, 'exportPDB').name('Export PDB');
 }
 
 // --- XR CONTROLLERS ---
@@ -103,7 +115,7 @@ function setupXRControllers() {
     controller2.userData.id = 1;
     scene.add(controller2);
 
-    const pivot = new THREE.Mesh(new THREE.IcosahedronGeometry(0.01, 3));
+    const pivot = new THREE.Mesh(new THREE.IcosahedronGeometry(0.01, 3), new THREE.MeshBasicMaterial({ visible: false }));
     pivot.name = 'pivot';
     pivot.position.z = -0.05;
 
@@ -321,8 +333,12 @@ function animate(_timestamp: DOMHighResTimeStamp, frame?: XRFrame) {
         const pos = getControllerWorldPos(ctrl);
         if (pos) {
             ctrl.userData.lastWorldPos = pos;
-            if (ctrl === controller1) updateGhostPreview(pos);
+            if (session && ctrl === controller1) updateGhostPreview(pos);
         }
+    }
+    if (!session) {
+        ghostGroup.clear();
+        guidelineGroup.clear();
     }
 
     renderer.render(scene, camera);

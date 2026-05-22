@@ -7,9 +7,19 @@ import { Atom, MolecularStructure } from './molecularData.js';
 import { calculateGuidelines, emptyBondNumber } from './guidelines.js';
 import type { GuidelineData } from './guidelines.js';
 import { biasedSortedBondOverlapForNew, sortedPositionsByDistance, findNearestAtom } from './hitChecks.js';
-import { createElementSelector, getSelectedElement, updateElementSelector } from './elementSelector.js';
+import {
+    createElementSelector,
+    getSelectedBuildMode,
+    getSelectedElement,
+    getSelectedPreset,
+    setPresetCatalog,
+    setPresetStatus,
+    updateElementSelector,
+} from './elementSelector.js';
 import { downloadPDB } from './exportPDB.js';
 import GUI from 'lil-gui';
+import { loadPresetManifest, loadPresetStructure } from './presetLibrary.js';
+import { applyFragmentPlacementPreview, buildFragmentPlacementPreview } from './fragmentPlacement.js';
 
 // --- STATE ---
 
@@ -38,6 +48,8 @@ const ghostMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, transpar
 const guideValidMat = new THREE.MeshStandardMaterial({ color: 0x44ff44, transparent: true, opacity: 0.35, depthWrite: false });
 const guideInvalidMat = new THREE.MeshStandardMaterial({ color: 0xff4444, transparent: true, opacity: 0.35, depthWrite: false });
 const deleteHighlightMat = new THREE.MeshStandardMaterial({ color: 0xff0000, transparent: true, opacity: 0.6, depthWrite: false });
+const fragmentConnectorMat = new THREE.MeshStandardMaterial({ color: 0x66ff99, transparent: true, opacity: 0.45, depthWrite: false });
+const fragmentHydrogenRemovalMat = new THREE.MeshStandardMaterial({ color: 0xffaa44, transparent: true, opacity: 0.45, depthWrite: false });
 const deleteHighlightGroup = new THREE.Group();
 const simulationSpace = new THREE.Group();
 
@@ -48,6 +60,10 @@ interface SqueezeGestureState {
     initialControllerDir: THREE.Vector3;
     initialSimulationSpaceMatrix: THREE.Matrix4;
 }
+
+let selectedFragmentTemplate: MolecularStructure | null = null;
+let presetLoadRequestId = 0;
+const presetStructureCache = new Map<string, MolecularStructure>();
 
 init();
 
@@ -101,6 +117,71 @@ function init() {
     // GUI
     const gui = new GUI();
     gui.add({ exportPDB: () => downloadPDB(molecule) }, 'exportPDB').name('Export PDB');
+    void setupPresetLibrary();
+}
+
+async function setupPresetLibrary(): Promise<void> {
+    try {
+        const manifest = await loadPresetManifest();
+        const categories = manifest.categories.filter(category => category.presets.length > 0);
+        setPresetCatalog(categories);
+        setPresetStatus(categories.length > 0 ? 'Preset library ready' : 'No presets available');
+        void refreshSelectedFragment();
+    } catch (error) {
+        console.error('Failed to initialise the preset library.', error);
+        setPresetCatalog([]);
+        selectedFragmentTemplate = null;
+        setPresetStatus('Preset library unavailable');
+    }
+}
+
+async function refreshSelectedFragment(): Promise<void> {
+    const mode = getSelectedBuildMode();
+    const preset = getSelectedPreset();
+
+    if (mode !== 'preset') {
+        presetLoadRequestId += 1;
+        selectedFragmentTemplate = null;
+        setPresetStatus('Atom placement ready');
+        return;
+    }
+
+    if (!preset) {
+        presetLoadRequestId += 1;
+        selectedFragmentTemplate = null;
+        setPresetStatus('No preset selected');
+        return;
+    }
+
+    const cached = presetStructureCache.get(preset.path);
+    if (cached) {
+        selectedFragmentTemplate = cached;
+        setPresetStatus(`${preset.label} ready`);
+        return;
+    }
+
+    const requestId = ++presetLoadRequestId;
+    selectedFragmentTemplate = null;
+    setPresetStatus(`Loading ${preset.label}...`);
+
+    try {
+        const structure = await loadPresetStructure(preset);
+        if (requestId !== presetLoadRequestId) {
+            return;
+        }
+
+        presetStructureCache.set(preset.path, structure);
+        selectedFragmentTemplate = structure;
+        setPresetStatus(`${preset.label} ready`);
+    } catch (error) {
+        if (requestId !== presetLoadRequestId) {
+            return;
+        }
+
+        console.error(`Failed to load preset ${preset.label}.`, error);
+        selectedFragmentTemplate = null;
+        setPresetStatus(`Failed to load ${preset.label}`);
+    }
 }
 
 // --- XR CONTROLLERS ---
@@ -116,7 +197,11 @@ function setupXRControllers() {
     function onSelectStart(this: THREE.XRTargetRaySpace) { this.userData.isSelecting = true; }
     function onSelectEnd(this: THREE.XRTargetRaySpace) {
         this.userData.isSelecting = false;
-        placeAtom(this.userData.lastWorldPos as THREE.Vector3);
+        if (getSelectedBuildMode() === 'preset') {
+            placeSelectedFragment(this);
+        } else {
+            placeAtom(this.userData.lastWorldPos as THREE.Vector3);
+        }
     }
 
     function onSelectStartRight(this: THREE.XRTargetRaySpace) { this.userData.isSelecting = true; }
@@ -176,7 +261,9 @@ function setupXRControllers() {
     grip2.add(modelFactory.createControllerModel(grip2));
     scene.add(grip2);
 
-    createElementSelector(controller2, renderer);
+    createElementSelector(controller2, renderer, () => {
+        void refreshSelectedFragment();
+    });
 }
 
 // --- TWO-HAND SQUEEZE GESTURE (Scale/Rotate) ---
@@ -393,11 +480,19 @@ function bondOrderOffsets(order: number, dir: THREE.Vector3, bondRadius: number)
 
 // --- GHOST PREVIEW ---
 
-function updateGhostPreview(cursorPos: THREE.Vector3) {
+function updateGhostPreview(controller: THREE.XRTargetRaySpace) {
     ghostGroup.clear();
     guidelineGroup.clear();
 
-    if (!cursorPos) return;
+    if (getSelectedBuildMode() === 'preset') {
+        updateFragmentGhostPreview(controller);
+        return;
+    }
+
+    const cursorPos = getControllerWorldPos(controller);
+    if (!cursorPos) {
+        return;
+    }
 
     const simCursorPos = worldToSimulationSpace(cursorPos);
 
@@ -454,11 +549,145 @@ function updateGhostPreview(cursorPos: THREE.Vector3) {
     }
 }
 
+function updateFragmentGhostPreview(controller: THREE.XRTargetRaySpace) {
+    if (!selectedFragmentTemplate) {
+        return;
+    }
+
+    const fragmentTransform = getControllerSimulationMatrix(controller);
+    if (!fragmentTransform) {
+        return;
+    }
+
+    const preview = buildFragmentPlacementPreview(molecule, selectedFragmentTemplate, fragmentTransform);
+    renderGhostStructure(preview.fragment);
+    renderFragmentConnections(preview);
+}
+
+function renderGhostStructure(structure: MolecularStructure) {
+    const simScale = simulationSpace.scale.x;
+
+    for (const atom of structure.atoms) {
+        const ghostMat = ghostMaterial.clone();
+        ghostMat.color = new THREE.Color(atom.color);
+
+        const ghostMesh = new THREE.Mesh(atomGeometry, ghostMat);
+        ghostMesh.position.copy(simulationToWorldSpace(atom.position));
+        ghostMesh.scale.setScalar(atom.scale / 2 * simScale);
+        ghostGroup.add(ghostMesh);
+    }
+
+    for (const bond of structure.bonds) {
+        const start = simulationToWorldSpace(bond.a.position);
+        const end = simulationToWorldSpace(bond.b.position);
+        renderGhostBond(start, end, bond.a.color, bond.b.color, Math.max(bond.a.scale, bond.b.scale) * BOND_SCALE * simScale, bond.order);
+    }
+}
+
+function renderFragmentConnections(preview: ReturnType<typeof buildFragmentPlacementPreview>) {
+    const simScale = simulationSpace.scale.x;
+
+    for (const connector of preview.connectors) {
+        const start = simulationToWorldSpace(connector.frameAtom.position);
+        const end = simulationToWorldSpace(connector.fragmentAtom.position);
+        const mid = start.clone().add(end).multiplyScalar(0.5);
+        const dir = end.clone().sub(start);
+        const len = dir.length();
+        const cyl = new THREE.Mesh(bondGeometry, fragmentConnectorMat);
+        cyl.position.copy(mid);
+        cyl.scale.set(Math.max(connector.frameAtom.scale, connector.fragmentAtom.scale) * BOND_SCALE * simScale, len, Math.max(connector.frameAtom.scale, connector.fragmentAtom.scale) * BOND_SCALE * simScale);
+        cyl.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+        ghostGroup.add(cyl);
+    }
+
+    for (const hydrogen of preview.frameHydrogensToRemove) {
+        const sphere = new THREE.Mesh(atomGeometry, fragmentHydrogenRemovalMat);
+        sphere.position.copy(simulationToWorldSpace(hydrogen.position));
+        sphere.scale.setScalar(hydrogen.scale / 2 * simScale * 1.15);
+        guidelineGroup.add(sphere);
+    }
+}
+
+function renderGhostBond(
+    start: THREE.Vector3,
+    end: THREE.Vector3,
+    startColor: number,
+    endColor: number,
+    bondRadius: number,
+    order: number,
+) {
+    const mid = start.clone().add(end).multiplyScalar(0.5);
+    const dir = end.clone().sub(start);
+    const len = dir.length();
+    const halfLen = len / 2;
+    const orientation = new THREE.Quaternion().setFromUnitVectors(
+        new THREE.Vector3(0, 1, 0), dir.clone().normalize()
+    );
+
+    const offsets = bondOrderOffsets(order, dir, bondRadius);
+    for (const offset of offsets) {
+        const midA = start.clone().add(mid).multiplyScalar(0.5);
+        const matA = ghostMaterial.clone();
+        matA.color = new THREE.Color(startColor);
+        const meshA = new THREE.Mesh(bondGeometry, matA);
+        meshA.position.copy(midA).add(offset);
+        meshA.scale.set(bondRadius, halfLen, bondRadius);
+        meshA.quaternion.copy(orientation);
+        ghostGroup.add(meshA);
+
+        const midB = mid.clone().add(end).multiplyScalar(0.5);
+        const matB = ghostMaterial.clone();
+        matB.color = new THREE.Color(endColor);
+        const meshB = new THREE.Mesh(bondGeometry, matB);
+        meshB.position.copy(midB).add(offset);
+        meshB.scale.set(bondRadius, halfLen, bondRadius);
+        meshB.quaternion.copy(orientation);
+        ghostGroup.add(meshB);
+    }
+}
+
+function placeSelectedFragment(controller: THREE.XRTargetRaySpace) {
+    if (!selectedFragmentTemplate) {
+        return;
+    }
+
+    const fragmentTransform = getControllerSimulationMatrix(controller);
+    if (!fragmentTransform) {
+        return;
+    }
+
+    const preview = buildFragmentPlacementPreview(molecule, selectedFragmentTemplate, fragmentTransform);
+    applyFragmentPlacementPreview(molecule, preview);
+    rebuildVisuals();
+}
+
 
 function getControllerWorldPos(controller: THREE.XRTargetRaySpace): THREE.Vector3 | null {
     const pivot = controller.getObjectByName('pivot');
     if (!pivot) return null;
     return new THREE.Vector3().setFromMatrixPosition(pivot.matrixWorld);
+}
+
+function getControllerSimulationMatrix(controller: THREE.XRTargetRaySpace): THREE.Matrix4 | null {
+    const pivot = controller.getObjectByName('pivot');
+    if (!pivot) {
+        return null;
+    }
+
+    simulationSpace.updateMatrixWorld(true);
+    pivot.updateMatrixWorld(true);
+
+    const worldPosition = new THREE.Vector3().setFromMatrixPosition(pivot.matrixWorld);
+    const simulationPosition = worldToSimulationSpace(worldPosition);
+    const pivotWorldQuaternion = pivot.getWorldQuaternion(new THREE.Quaternion());
+    const simulationWorldQuaternion = simulationSpace.getWorldQuaternion(new THREE.Quaternion());
+    const simulationQuaternion = simulationWorldQuaternion.invert().multiply(pivotWorldQuaternion);
+
+    return new THREE.Matrix4().compose(
+        simulationPosition,
+        simulationQuaternion,
+        new THREE.Vector3(1, 1, 1)
+    );
 }
 
 // convert world position to simulation space 
@@ -500,7 +729,7 @@ function animate(_timestamp: DOMHighResTimeStamp, frame?: XRFrame) {
         const pos = getControllerWorldPos(ctrl);
         if (pos) {
             ctrl.userData.lastWorldPos = pos;
-            if (session && ctrl === controller1) updateGhostPreview(pos);
+            if (session && ctrl === controller1) updateGhostPreview(ctrl);
             if (session && ctrl === controller2) updateDeleteHighlight(pos);
         }
     }

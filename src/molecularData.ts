@@ -72,6 +72,11 @@ export class MolecularStructure {
     atoms: Atom[] = [];
     bonds: Bond[] = [];
 
+    clear(): void {
+        this.atoms = [];
+        this.bonds = [];
+    }
+
     addAtom(element: string, position: THREE.Vector3): Atom {
         const atom = new Atom(element, position, this.atoms.length);
         this.atoms.push(atom);
@@ -116,6 +121,63 @@ export class MolecularStructure {
     reindex(): void {
         this.atoms.forEach((a, i) => a.index = i);
         this.bonds.forEach((b, i) => b.index = i);
+    }
+
+    clone(): MolecularStructure {
+        const clone = new MolecularStructure();
+        clone.appendStructure(this);
+        return clone;
+    }
+
+    transformed(matrix: THREE.Matrix4): MolecularStructure {
+        const transformed = this.clone();
+        for (const atom of transformed.atoms) {
+            atom.position.applyMatrix4(matrix);
+        }
+        return transformed;
+    }
+
+    removeAtoms(atoms: Iterable<Atom>): void {
+        const removals = new Set(atoms);
+        for (const atom of removals) {
+            if (this.atoms.includes(atom)) {
+                this.removeAtom(atom);
+            }
+        }
+    }
+
+    appendStructureWithMap(
+        structure: MolecularStructure,
+        translation: THREE.Vector3 = new THREE.Vector3()
+    ): Map<Atom, Atom> {
+        const atomMap = new Map<Atom, Atom>();
+
+        for (const atom of structure.atoms) {
+            const appendedAtom = this.addAtom(atom.element, atom.position.clone().add(translation));
+            atomMap.set(atom, appendedAtom);
+        }
+
+        for (const bond of structure.bonds) {
+            const source = atomMap.get(bond.a);
+            const target = atomMap.get(bond.b);
+            if (!source || !target) {
+                continue;
+            }
+
+            this.addBond(source, target, bond.order);
+        }
+
+        this.reindex();
+        return atomMap;
+    }
+
+    appendStructure(structure: MolecularStructure, translation: THREE.Vector3 = new THREE.Vector3()): void {
+        this.appendStructureWithMap(structure, translation);
+    }
+
+    replaceWith(structure: MolecularStructure): void {
+        this.clear();
+        this.appendStructure(structure);
     }
 
     static idealBondLength(a: Atom | string, b: Atom | string, order: number = 1): number {

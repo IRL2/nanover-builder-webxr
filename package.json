@@ -4,6 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "prepare-presets": "node ./scripts/sync-presets.mjs",
+    "predev": "npm run prepare-presets",
+    "prebuild": "npm run prepare-presets",
     "dev": "vite --host --open",
     "build": "tsc && vite build",
     "preview": "vite preview --host --open"

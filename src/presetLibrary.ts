@@ -32,8 +32,12 @@ interface Mol2BondRecord {
     order: number;
 }
 
+function resolvePresetUrl(path: string): URL {
+    return new URL(path, new URL(import.meta.env.BASE_URL, window.location.origin));
+}
+
 export async function loadPresetManifest(): Promise<PresetManifest> {
-    const response = await fetch(new URL('presets/manifest.json', window.location.href));
+    const response = await fetch(resolvePresetUrl('presets/manifest.json'));
     if (!response.ok) {
         throw new Error(`Failed to load preset manifest: ${response.status} ${response.statusText}`);
     }
@@ -42,7 +46,7 @@ export async function loadPresetManifest(): Promise<PresetManifest> {
 }
 
 export async function loadPresetStructure(preset: PresetInfo): Promise<MolecularStructure> {
-    const response = await fetch(new URL(preset.path, window.location.href));
+    const response = await fetch(resolvePresetUrl(preset.path));
     if (!response.ok) {
         throw new Error(`Failed to load preset ${preset.label}: ${response.status} ${response.statusText}`);
     }

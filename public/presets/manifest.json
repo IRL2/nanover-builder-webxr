@@ -1,0 +1,410 @@
+{
+  "categories": [
+    {
+      "id": "AminoAcids",
+      "label": "Amino Acids",
+      "presets": [
+        {
+          "id": "Alanine",
+          "label": "Alanine",
+          "path": "presets/AminoAcids/Alanine.mol2"
+        },
+        {
+          "id": "Arginine",
+          "label": "Arginine",
+          "path": "presets/AminoAcids/Arginine.mol2"
+        },
+        {
+          "id": "Asparagine",
+          "label": "Asparagine",
+          "path": "presets/AminoAcids/Asparagine.mol2"
+        },
+        {
+          "id": "Aspartic Acid",
+          "label": "Aspartic Acid",
+          "path": "presets/AminoAcids/Aspartic%20Acid.mol2"
+        },
+        {
+          "id": "Cysteine",
+          "label": "Cysteine",
+          "path": "presets/AminoAcids/Cysteine.mol2"
+        },
+        {
+          "id": "Glutamic Acid",
+          "label": "Glutamic Acid",
+          "path": "presets/AminoAcids/Glutamic%20Acid.mol2"
+        },
+        {
+          "id": "Glutamine",
+          "label": "Glutamine",
+          "path": "presets/AminoAcids/Glutamine.mol2"
+        },
+        {
+          "id": "Glycine",
+          "label": "Glycine",
+          "path": "presets/AminoAcids/Glycine.mol2"
+        },
+        {
+          "id": "Histidine",
+          "label": "Histidine",
+          "path": "presets/AminoAcids/Histidine.mol2"
+        },
+        {
+          "id": "Isoleucine",
+          "label": "Isoleucine",
+          "path": "presets/AminoAcids/Isoleucine.mol2"
+        },
+        {
+          "id": "Leucine",
+          "label": "Leucine",
+          "path": "presets/AminoAcids/Leucine.mol2"
+        },
+        {
+          "id": "Lysine",
+          "label": "Lysine",
+          "path": "presets/AminoAcids/Lysine.mol2"
+        },
+        {
+          "id": "Methionine",
+          "label": "Methionine",
+          "path": "presets/AminoAcids/Methionine.mol2"
+        },
+        {
+          "id": "Phenylalanine",
+          "label": "Phenylalanine",
+          "path": "presets/AminoAcids/Phenylalanine.mol2"
+        },
+        {
+          "id": "Proline",
+          "label": "Proline",
+          "path": "presets/AminoAcids/Proline.mol2"
+        },
+        {
+          "id": "Serine",
+          "label": "Serine",
+          "path": "presets/AminoAcids/Serine.mol2"
+        },
+        {
+          "id": "Threonine",
+          "label": "Threonine",
+          "path": "presets/AminoAcids/Threonine.mol2"
+        },
+        {
+          "id": "Tryptophan",
+          "label": "Tryptophan",
+          "path": "presets/AminoAcids/Tryptophan.mol2"
+        },
+        {
+          "id": "Tyrosine",
+          "label": "Tyrosine",
+          "path": "presets/AminoAcids/Tyrosine.mol2"
+        },
+        {
+          "id": "Valine",
+          "label": "Valine",
+          "path": "presets/AminoAcids/Valine.mol2"
+        }
+      ]
+    },
+    {
+      "id": "Biomolecules",
+      "label": "Biomolecules",
+      "presets": [
+        {
+          "id": "Adenine",
+          "label": "Adenine",
+          "path": "presets/Biomolecules/Adenine.mol2"
+        },
+        {
+          "id": "Cytosine",
+          "label": "Cytosine",
+          "path": "presets/Biomolecules/Cytosine.mol2"
+        },
+        {
+          "id": "Galactose",
+          "label": "Galactose",
+          "path": "presets/Biomolecules/Galactose.mol2"
+        },
+        {
+          "id": "Glucose",
+          "label": "Glucose",
+          "path": "presets/Biomolecules/Glucose.mol2"
+        },
+        {
+          "id": "Guanine",
+          "label": "Guanine",
+          "path": "presets/Biomolecules/Guanine.mol2"
+        },
+        {
+          "id": "Hypoxanthine",
+          "label": "Hypoxanthine",
+          "path": "presets/Biomolecules/Hypoxanthine.mol2"
+        },
+        {
+          "id": "Mannose",
+          "label": "Mannose",
+          "path": "presets/Biomolecules/Mannose.mol2"
+        },
+        {
+          "id": "Ribose",
+          "label": "Ribose",
+          "path": "presets/Biomolecules/Ribose.mol2"
+        },
+        {
+          "id": "Thymine",
+          "label": "Thymine",
+          "path": "presets/Biomolecules/Thymine.mol2"
+        },
+        {
+          "id": "Uracil",
+          "label": "Uracil",
+          "path": "presets/Biomolecules/Uracil.mol2"
+        },
+        {
+          "id": "Xanthine",
+          "label": "Xanthine",
+          "path": "presets/Biomolecules/Xanthine.mol2"
+        }
+      ]
+    },
+    {
+      "id": "Carbonyls",
+      "label": "Functional Groups",
+      "presets": [
+        {
+          "id": "Acetal",
+          "label": "Acetal",
+          "path": "presets/Carbonyls/Acetal.mol2"
+        },
+        {
+          "id": "Acid Anhydride",
+          "label": "Acid Anhydride",
+          "path": "presets/Carbonyls/Acid%20Anhydride.mol2"
+        },
+        {
+          "id": "Aldehyde",
+          "label": "Aldehyde",
+          "path": "presets/Carbonyls/Aldehyde.mol2"
+        },
+        {
+          "id": "Amide",
+          "label": "Amide",
+          "path": "presets/Carbonyls/Amide.mol2"
+        },
+        {
+          "id": "Carbonate",
+          "label": "Carbonate",
+          "path": "presets/Carbonyls/Carbonate.mol2"
+        },
+        {
+          "id": "Carboxylic Acid",
+          "label": "Carboxylic Acid",
+          "path": "presets/Carbonyls/Carboxylic%20Acid.mol2"
+        },
+        {
+          "id": "Cyanate",
+          "label": "Cyanate",
+          "path": "presets/Carbonyls/Cyanate.mol2"
+        },
+        {
+          "id": "Guanidino",
+          "label": "Guanidino",
+          "path": "presets/Carbonyls/Guanidino.mol2"
+        },
+        {
+          "id": "Imide",
+          "label": "Imide",
+          "path": "presets/Carbonyls/Imide.mol2"
+        },
+        {
+          "id": "Imine",
+          "label": "Imine",
+          "path": "presets/Carbonyls/Imine.mol2"
+        },
+        {
+          "id": "Isocyanate",
+          "label": "Isocyanate",
+          "path": "presets/Carbonyls/Isocyanate.mol2"
+        },
+        {
+          "id": "Ketone",
+          "label": "Ketone",
+          "path": "presets/Carbonyls/Ketone.mol2"
+        },
+        {
+          "id": "Nitrate",
+          "label": "Nitrate",
+          "path": "presets/Carbonyls/Nitrate.mol2"
+        },
+        {
+          "id": "Nitrite",
+          "label": "Nitrite",
+          "path": "presets/Carbonyls/Nitrite.mol2"
+        },
+        {
+          "id": "Phosphate",
+          "label": "Phosphate",
+          "path": "presets/Carbonyls/Phosphate.mol2"
+        },
+        {
+          "id": "Sulphate",
+          "label": "Sulphate",
+          "path": "presets/Carbonyls/Sulphate.mol2"
+        }
+      ]
+    },
+    {
+      "id": "RGroups",
+      "label": "R Groups",
+      "presets": [
+        {
+          "id": "Ethyl",
+          "label": "Ethyl",
+          "path": "presets/RGroups/Ethyl.mol2"
+        },
+        {
+          "id": "Methyl",
+          "label": "Methyl",
+          "path": "presets/RGroups/Methyl.mol2"
+        },
+        {
+          "id": "n-Butyl",
+          "label": "n-Butyl",
+          "path": "presets/RGroups/n-Butyl.mol2"
+        },
+        {
+          "id": "Propyl",
+          "label": "Propyl",
+          "path": "presets/RGroups/Propyl.mol2"
+        },
+        {
+          "id": "t-Butyl",
+          "label": "t-Butyl",
+          "path": "presets/RGroups/t-Butyl.mol2"
+        }
+      ]
+    },
+    {
+      "id": "Rings",
+      "label": "Rings",
+      "presets": [
+        {
+          "id": "Adamantane",
+          "label": "Adamantane",
+          "path": "presets/Rings/Adamantane.mol2"
+        },
+        {
+          "id": "Benzene",
+          "label": "Benzene",
+          "path": "presets/Rings/Benzene.mol2"
+        },
+        {
+          "id": "Biphenyl",
+          "label": "Biphenyl",
+          "path": "presets/Rings/Biphenyl.mol2"
+        },
+        {
+          "id": "Furan",
+          "label": "Furan",
+          "path": "presets/Rings/Furan.mol2"
+        },
+        {
+          "id": "Gonane",
+          "label": "Gonane",
+          "path": "presets/Rings/Gonane.mol2"
+        },
+        {
+          "id": "Imidazole",
+          "label": "Imidazole",
+          "path": "presets/Rings/Imidazole.mol2"
+        },
+        {
+          "id": "Indazole",
+          "label": "Indazole",
+          "path": "presets/Rings/Indazole.mol2"
+        },
+        {
+          "id": "Indole",
+          "label": "Indole",
+          "path": "presets/Rings/Indole.mol2"
+        },
+        {
+          "id": "Napthalene",
+          "label": "Napthalene",
+          "path": "presets/Rings/Napthalene.mol2"
+        },
+        {
+          "id": "Pteridine",
+          "label": "Pteridine",
+          "path": "presets/Rings/Pteridine.mol2"
+        },
+        {
+          "id": "Purine",
+          "label": "Purine",
+          "path": "presets/Rings/Purine.mol2"
+        },
+        {
+          "id": "Pyrazine",
+          "label": "Pyrazine",
+          "path": "presets/Rings/Pyrazine.mol2"
+        },
+        {
+          "id": "Pyrazole",
+          "label": "Pyrazole",
+          "path": "presets/Rings/Pyrazole.mol2"
+        },
+        {
+          "id": "Pyrene",
+          "label": "Pyrene",
+          "path": "presets/Rings/Pyrene.mol2"
+        },
+        {
+          "id": "Pyridazine",
+          "label": "Pyridazine",
+          "path": "presets/Rings/Pyridazine.mol2"
+        },
+        {
+          "id": "Pyridine",
+          "label": "Pyridine",
+          "path": "presets/Rings/Pyridine.mol2"
+        },
+        {
+          "id": "Pyrimidine",
+          "label": "Pyrimidine",
+          "path": "presets/Rings/Pyrimidine.mol2"
+        },
+        {
+          "id": "Pyrrole",
+          "label": "Pyrrole",
+          "path": "presets/Rings/Pyrrole.mol2"
+        },
+        {
+          "id": "Tetrahydrofuran",
+          "label": "Tetrahydrofuran",
+          "path": "presets/Rings/Tetrahydrofuran.mol2"
+        },
+        {
+          "id": "Thiazole",
+          "label": "Thiazole",
+          "path": "presets/Rings/Thiazole.mol2"
+        }
+      ]
+    },
+    {
+      "id": "UserFragments",
+      "label": "User Fragments",
+      "presets": [
+        {
+          "id": "paste",
+          "label": "paste",
+          "path": "presets/UserFragments/paste.mol2"
+        },
+        {
+          "id": "Sample Mol2 File",
+          "label": "Sample Mol2 File",
+          "path": "presets/UserFragments/Sample%20Mol2%20File.mol2"
+        }
+      ]
+    }
+  ]
+}

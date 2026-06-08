@@ -4,7 +4,7 @@ import { ELEMENTS } from './elementValues.js';
 import type { PresetCategory, PresetInfo } from './presetLibrary.js';
 
 export type BuildMode = 'atom' | 'preset' | 'bond';
-export type BondPlacementOrder = 1 | 2;
+export type BondPlacementOrder = 1 | 2 | 3;
 
 type FocusSection = 'mode' | 'primary' | 'secondary';
 type SelectionChangeHandler = () => void;
@@ -13,6 +13,7 @@ const elementKeys = Object.keys(ELEMENTS);
 const bondOrderOptions: ReadonlyArray<{ label: string; order: BondPlacementOrder }> = [
     { label: 'Single bond', order: 1 },
     { label: 'Double bond', order: 2 },
+    { label: 'Triple bond', order: 3 },
 ];
 
 let selectedElementIndex = 0;

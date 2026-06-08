@@ -3,18 +3,24 @@ import * as THREE from 'three';
 import { ELEMENTS } from './elementValues.js';
 import type { PresetCategory, PresetInfo } from './presetLibrary.js';
 
-export type BuildMode = 'atom' | 'preset';
+export type BuildMode = 'atom' | 'preset' | 'bond';
+export type BondPlacementOrder = 1 | 2;
 
 type FocusSection = 'mode' | 'primary' | 'secondary';
 type SelectionChangeHandler = () => void;
 
 const elementKeys = Object.keys(ELEMENTS);
+const bondOrderOptions: ReadonlyArray<{ label: string; order: BondPlacementOrder }> = [
+    { label: 'Single bond', order: 1 },
+    { label: 'Double bond', order: 2 },
+];
 
 let selectedElementIndex = 0;
 let buildMode: BuildMode = 'atom';
 let presetCategories: PresetCategory[] = [];
 let selectedCategoryIndex = 0;
 let selectedPresetIndex = 0;
+let selectedBondOrderIndex = 0;
 let focusIndex = 1;
 let statusMessage = 'Loading preset library...';
 
@@ -159,6 +165,10 @@ export function getSelectedPreset(): PresetInfo | null {
     return category?.presets[selectedPresetIndex] ?? null;
 }
 
+export function getSelectedBondOrder(): BondPlacementOrder {
+    return bondOrderOptions[selectedBondOrderIndex]?.order ?? 1;
+}
+
 export function setPresetCatalog(categories: PresetCategory[]): void {
     presetCategories = categories.filter(category => category.presets.length > 0);
     selectedCategoryIndex = 0;
@@ -251,6 +261,23 @@ function getFocusSections(): FocusSection[] {
         : ['mode', 'primary'];
 }
 
+function getAvailableBuildModes(): BuildMode[] {
+    return presetCategories.length > 0
+        ? ['atom', 'preset', 'bond']
+        : ['atom', 'bond'];
+}
+
+function getModeLabel(mode: BuildMode): string {
+    switch (mode) {
+        case 'atom':
+            return 'Atom placement';
+        case 'preset':
+            return 'Preset fragment';
+        case 'bond':
+            return 'Bond editing';
+    }
+}
+
 function moveFocus(step: number): void {
     const sections = getFocusSections();
     focusIndex = Math.max(0, Math.min(sections.length - 1, focusIndex + step));
@@ -263,13 +290,20 @@ function changeFocusedValue(step: number): void {
 
     switch (section) {
         case 'mode':
-            buildMode = buildMode === 'atom' ? 'preset' : 'atom';
+            {
+                const modes = getAvailableBuildModes();
+                const currentModeIndex = Math.max(0, modes.indexOf(buildMode));
+                buildMode = modes[cycleIndex(currentModeIndex, modes.length, step)];
+            }
             focusIndex = Math.min(focusIndex, getFocusSections().length - 1);
             changed = true;
             break;
         case 'primary':
             if (buildMode === 'atom') {
                 selectedElementIndex = cycleIndex(selectedElementIndex, elementKeys.length, step);
+                changed = true;
+            } else if (buildMode === 'bond') {
+                selectedBondOrderIndex = cycleIndex(selectedBondOrderIndex, bondOrderOptions.length, step);
                 changed = true;
             } else if (presetCategories.length > 0) {
                 selectedCategoryIndex = cycleIndex(selectedCategoryIndex, presetCategories.length, step);
@@ -298,19 +332,23 @@ function updateSelectionVisuals(): void {
     const element = getSelectedElement();
     const presetCategory = presetCategories[selectedCategoryIndex];
     const preset = getSelectedPreset();
+    const selectedBondOrder = bondOrderOptions[selectedBondOrderIndex];
+    const isAtomMode = buildMode === 'atom';
+    const isBondMode = buildMode === 'bond';
     const isPresetMode = buildMode === 'preset';
+    const usesWideLayout = isPresetMode || isBondMode;
     const elementData = ELEMENTS[element];
 
     rootContainer?.setProperties({
-        sizeX: isPresetMode ? PRESET_ROOT_WIDTH : ATOM_ROOT_WIDTH,
+        sizeX: usesWideLayout ? PRESET_ROOT_WIDTH : ATOM_ROOT_WIDTH,
     });
 
     modeText?.setProperties({
-        fontSize: isPresetMode ? 5.4 : 4.8,
-        text: `Mode: ${buildMode === 'atom' ? 'Atom placement' : 'Preset fragment'}`,
+        fontSize: usesWideLayout ? 5.4 : 4.8,
+        text: `Mode: ${getModeLabel(buildMode)}`,
     });
 
-    if (!isPresetMode) {
+    if (isAtomMode) {
         atomOptionsRow?.setProperties({
             display: 'flex',
             opacity: 1,
@@ -329,7 +367,7 @@ function updateSelectionVisuals(): void {
             color: 0xffffff,
         });
         updateAtomSelectionVisuals();
-    } else {
+    } else if (isPresetMode) {
         atomOptionsRow?.setProperties({
             display: 'none',
             width: 0,
@@ -347,19 +385,37 @@ function updateSelectionVisuals(): void {
             text: `Preset: ${preset?.label ?? 'No preset selected'}`,
             color: 0xffffff,
         });
+    } else {
+        atomOptionsRow?.setProperties({
+            display: 'none',
+            width: 0,
+            height: 0,
+            minWidth: 0,
+            minHeight: 0,
+            opacity: 0,
+        });
+        primaryText?.setProperties({
+            fontSize: 5.4,
+            text: `Bond order: ${selectedBondOrder?.label ?? 'Single bond'}`,
+        });
+        secondaryText?.setProperties({
+            fontSize: 4.6,
+            text: 'Left: place/update, right: delete',
+            color: 0xcccccc,
+        });
     }
 
     applyContainerState(modeContainer, 0, true);
     applyContainerState(primaryContainer, 1, true);
     applyContainerState(secondaryContainer, 2, isPresetMode);
     secondaryContainer?.setProperties({
-        width: isPresetMode ? PRESET_ROW_WIDTH : ATOM_ROW_WIDTH,
+        width: usesWideLayout ? PRESET_ROW_WIDTH : ATOM_ROW_WIDTH,
     });
     primaryContainer?.setProperties({
-        width: isPresetMode ? PRESET_ROW_WIDTH : ATOM_ROW_WIDTH,
+        width: usesWideLayout ? PRESET_ROW_WIDTH : ATOM_ROW_WIDTH,
     });
     modeContainer?.setProperties({
-        width: isPresetMode ? PRESET_ROW_WIDTH : ATOM_ROW_WIDTH,
+        width: usesWideLayout ? PRESET_ROW_WIDTH : ATOM_ROW_WIDTH,
     });
     statusText?.setProperties({
         text: statusMessage,

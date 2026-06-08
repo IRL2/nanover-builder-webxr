@@ -3,12 +3,13 @@ import * as THREE from 'three';
 import { XRButton } from 'three/addons/webxr/XRButton.js';
 import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { Atom, MolecularStructure } from './molecularData.js';
+import { Atom, Bond, MolecularStructure } from './molecularData.js';
 import { calculateGuidelines, emptyBondNumber } from './guidelines.js';
 import type { GuidelineData } from './guidelines.js';
-import { biasedSortedBondOverlapForNew, sortedPositionsByDistance, findNearestAtom } from './hitChecks.js';
+import { biasedSortedBondOverlapForNew, sortedPositionsByDistance, findNearestAtom, distanceToSegment } from './hitChecks.js';
 import {
     createElementSelector,
+    getSelectedBondOrder,
     getSelectedBuildMode,
     getSelectedElement,
     getSelectedPreset,
@@ -41,6 +42,10 @@ const ghostGroup = new THREE.Group();
 const guidelineGroup = new THREE.Group();
 
 const BOND_SCALE = 0.15; // bond radius relative to atom scale
+const MULTI_BOND_SHRINK = 0.8;
+const MULTI_BOND_SPACING = 2.5;
+const BOND_SELECTION_MARGIN = 0.025;
+const BOND_DISTANCE_BIAS = 1.5;
 const atomGeometry = new THREE.SphereGeometry(1, 24, 16);
 const bondGeometry = new THREE.CylinderGeometry(1, 1, 1, 8);
 const guidelineGeometry = new THREE.SphereGeometry(1, 12, 8);
@@ -59,6 +64,13 @@ interface SqueezeGestureState {
     initialMidpoint: THREE.Vector3;
     initialControllerDir: THREE.Vector3;
     initialSimulationSpaceMatrix: THREE.Matrix4;
+}
+
+interface BondPlacementCandidate {
+    atomA: Atom;
+    atomB: Atom;
+    existingBond: Bond | null;
+    order: number;
 }
 
 let selectedFragmentTemplate: MolecularStructure | null = null;
@@ -142,7 +154,7 @@ async function refreshSelectedFragment(): Promise<void> {
     if (mode !== 'preset') {
         presetLoadRequestId += 1;
         selectedFragmentTemplate = null;
-        setPresetStatus('Atom placement ready');
+        setPresetStatus(mode === 'bond' ? 'Bond editing ready' : 'Atom placement ready');
         return;
     }
 
@@ -197,19 +209,27 @@ function setupXRControllers() {
     function onSelectStart(this: THREE.XRTargetRaySpace) { this.userData.isSelecting = true; }
     function onSelectEnd(this: THREE.XRTargetRaySpace) {
         this.userData.isSelecting = false;
-        if (getSelectedBuildMode() === 'preset') {
+        const mode = getSelectedBuildMode();
+        const worldPos = this.userData.lastWorldPos as THREE.Vector3 | undefined;
+        if (mode === 'preset') {
             placeSelectedFragment(this);
+        } else if (mode === 'bond') {
+            placeBondAtPosition(worldPos);
         } else {
-            placeAtom(this.userData.lastWorldPos as THREE.Vector3);
+            placeAtom(worldPos);
         }
     }
 
     function onSelectStartRight(this: THREE.XRTargetRaySpace) { this.userData.isSelecting = true; }
     function onSelectEndRight(this: THREE.XRTargetRaySpace) {
         this.userData.isSelecting = false;
-        const worldPos = this.userData.lastWorldPos as THREE.Vector3;
+        const worldPos = this.userData.lastWorldPos as THREE.Vector3 | undefined;
         if (worldPos) {
-            removeAtomAtPosition(worldPos);
+            if (getSelectedBuildMode() === 'bond') {
+                removeBondAtPosition(worldPos);
+            } else {
+                removeAtomAtPosition(worldPos);
+            }
         }
     }
 
@@ -262,6 +282,9 @@ function setupXRControllers() {
     scene.add(grip2);
 
     createElementSelector(controller2, renderer, () => {
+        ghostGroup.clear();
+        guidelineGroup.clear();
+        deleteHighlightGroup.clear();
         void refreshSelectedFragment();
     });
 }
@@ -332,7 +355,11 @@ function updateTwoHandGesture() {
 
 // --- ATOM REMOVAL ---
 
-function removeAtomAtPosition(worldPos: THREE.Vector3) {
+function removeAtomAtPosition(worldPos: THREE.Vector3 | undefined) {
+    if (!worldPos) {
+        return;
+    }
+
     const simPos = worldToSimulationSpace(worldPos);
     const atom = findNearestAtom(simPos, molecule.atoms, 0.08);
     if (atom) {
@@ -341,41 +368,92 @@ function removeAtomAtPosition(worldPos: THREE.Vector3) {
     }
 }
 
+function removeBondAtPosition(worldPos: THREE.Vector3 | undefined) {
+    if (!worldPos) {
+        return;
+    }
+
+    const simPos = worldToSimulationSpace(worldPos);
+    const bond = findBondDeletionCandidate(simPos);
+    if (!bond) {
+        return;
+    }
+
+    molecule.removeBond(bond);
+    molecule.reindex();
+    rebuildVisuals();
+}
+
 function updateDeleteHighlight(cursorPos: THREE.Vector3 | null) {
     deleteHighlightGroup.clear();
 
-    if (!cursorPos) return;
+    if (!cursorPos) {
+        return;
+    }
 
+    if (getSelectedBuildMode() === 'bond') {
+        updateBondDeleteHighlight(cursorPos);
+        return;
+    }
+
+    updateAtomDeleteHighlight(cursorPos);
+}
+
+function updateAtomDeleteHighlight(cursorPos: THREE.Vector3) {
     const simPos = worldToSimulationSpace(cursorPos);
     const atom = findNearestAtom(simPos, molecule.atoms, 0.08);
-    if (!atom) return;
+    if (!atom) {
+        return;
+    }
 
+    renderDeleteAtomHighlight(atom);
+
+    for (const bond of atom.bonds) {
+        const other = bond.a === atom ? bond.b : bond.a;
+        renderBondHighlight(
+            deleteHighlightGroup,
+            atom.position,
+            other.position,
+            Math.max(atom.scale, other.scale) * BOND_SCALE * 1.3,
+            bond.order,
+            deleteHighlightMat,
+        );
+    }
+}
+
+function updateBondDeleteHighlight(cursorPos: THREE.Vector3) {
+    const simPos = worldToSimulationSpace(cursorPos);
+    const bond = findBondDeletionCandidate(simPos);
+    if (!bond) {
+        return;
+    }
+
+    renderDeleteAtomHighlight(bond.a);
+    renderDeleteAtomHighlight(bond.b);
+    renderBondHighlight(
+        deleteHighlightGroup,
+        bond.a.position,
+        bond.b.position,
+        Math.max(bond.a.scale, bond.b.scale) * BOND_SCALE * 1.3,
+        bond.order,
+        deleteHighlightMat,
+    );
+}
+
+function renderDeleteAtomHighlight(atom: Atom) {
     const highlightMesh = new THREE.Mesh(atomGeometry, deleteHighlightMat);
     highlightMesh.position.copy(atom.position);
     highlightMesh.scale.setScalar(atom.scale / 2 * 1.3);
     deleteHighlightGroup.add(highlightMesh);
-
-    for (const bond of atom.bonds) {
-        const other = bond.a === atom ? bond.b : bond.a;
-        const start = atom.position;
-        const end = other.position;
-        const mid = start.clone().add(end).multiplyScalar(0.5);
-        const dir = end.clone().sub(start);
-        const len = dir.length();
-        const bondRadius = Math.max(atom.scale, other.scale) * BOND_SCALE * 1.3;
-
-        const cyl = new THREE.Mesh(bondGeometry, deleteHighlightMat);
-        cyl.position.copy(mid);
-        cyl.scale.set(bondRadius, len, bondRadius);
-        cyl.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
-        deleteHighlightGroup.add(cyl);
-    }
 }
 
 // --- ELEMENT PLACEMENT ---
 
-function placeAtom(worldPos: THREE.Vector3) {
-    if (!worldPos) return;
+function placeAtom(worldPos: THREE.Vector3 | undefined) {
+    if (!worldPos) {
+        return;
+    }
+
     const simPos = worldToSimulationSpace(worldPos);
 
     const el = getSelectedElement();
@@ -392,6 +470,24 @@ function placeAtom(worldPos: THREE.Vector3) {
         if (newAtom.emptyBonds <= 0) break;
         if (target.emptyBonds <= 0) continue;
         molecule.addBond(newAtom, target, 1);
+    }
+
+    rebuildVisuals();
+}
+
+function placeBondAtPosition(worldPos: THREE.Vector3 | undefined) {
+    if (!worldPos) {
+        return;
+    }
+
+    const simPos = worldToSimulationSpace(worldPos);
+    const candidate = findBondPlacementCandidate(simPos);
+    if (!candidate || candidate.existingBond?.order === candidate.order) {
+        return;
+    }
+
+    if (!molecule.setBondOrder(candidate.atomA, candidate.atomB, candidate.order)) {
+        return;
     }
 
     rebuildVisuals();
@@ -415,6 +511,103 @@ function snapToGuideline(element: string, cursorPos: THREE.Vector3, nearbyCores:
     return snapped;
 }
 
+function findBondPlacementCandidate(cursorPos: THREE.Vector3): BondPlacementCandidate | null {
+    const desiredOrder = getSelectedBondOrder();
+    let bestCandidate: BondPlacementCandidate | null = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+
+    for (const bond of molecule.bonds) {
+        if (!molecule.canSetBondOrder(bond.a, bond.b, desiredOrder)) {
+            continue;
+        }
+
+        const score = getBondSelectionScore(cursorPos, bond.a, bond.b, bond.order);
+        if (score === null || score >= bestScore) {
+            continue;
+        }
+
+        bestCandidate = {
+            atomA: bond.a,
+            atomB: bond.b,
+            existingBond: bond,
+            order: desiredOrder,
+        };
+        bestScore = score;
+    }
+
+    for (let i = 0; i < molecule.atoms.length; i++) {
+        const atomA = molecule.atoms[i];
+        for (let j = i + 1; j < molecule.atoms.length; j++) {
+            const atomB = molecule.atoms[j];
+            if (molecule.getBondBetween(atomA, atomB)) {
+                continue;
+            }
+
+            if (!molecule.canSetBondOrder(atomA, atomB, desiredOrder)) {
+                continue;
+            }
+
+            if (!isBondPlacementDistanceValid(atomA, atomB, desiredOrder)) {
+                continue;
+            }
+
+            const score = getBondSelectionScore(cursorPos, atomA, atomB, desiredOrder);
+            if (score === null || score >= bestScore) {
+                continue;
+            }
+
+            bestCandidate = {
+                atomA,
+                atomB,
+                existingBond: null,
+                order: desiredOrder,
+            };
+            bestScore = score;
+        }
+    }
+
+    return bestCandidate;
+}
+
+function findBondDeletionCandidate(cursorPos: THREE.Vector3): Bond | null {
+    let bestBond: Bond | null = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+
+    for (const bond of molecule.bonds) {
+        const score = getBondSelectionScore(cursorPos, bond.a, bond.b, bond.order);
+        if (score === null || score >= bestScore) {
+            continue;
+        }
+
+        bestBond = bond;
+        bestScore = score;
+    }
+
+    return bestBond;
+}
+
+function getBondSelectionScore(
+    cursorPos: THREE.Vector3,
+    atomA: Atom,
+    atomB: Atom,
+    visibleOrder: number,
+): number | null {
+    const baseBondRadius = Math.max(atomA.scale, atomB.scale) * BOND_SCALE;
+    const maxDistance = getBondHitRadius(baseBondRadius, visibleOrder) + BOND_SELECTION_MARGIN;
+    const distance = distanceToSegment(cursorPos, atomA.position, atomB.position);
+    if (distance > maxDistance) {
+        return null;
+    }
+
+    const midpointDistance = atomA.position.clone().add(atomB.position).multiplyScalar(0.5).distanceTo(cursorPos);
+    return distance * 2 + midpointDistance * 0.25;
+}
+
+function isBondPlacementDistanceValid(atomA: Atom, atomB: Atom, order: number): boolean {
+    const idealLength = MolecularStructure.idealBondLength(atomA, atomB, order);
+    return atomA.position.distanceTo(atomB.position) <= idealLength * BOND_DISTANCE_BIAS;
+}
+
 function rebuildVisuals() {
     atomGroup.clear();
     bondGroup.clear();
@@ -436,7 +629,10 @@ function rebuildVisuals() {
         const dir = end.clone().sub(start);
         const len = dir.length();
         const halfLen = len / 2;
-        const bondRadius = Math.max(bond.a.scale, bond.b.scale) * BOND_SCALE;
+        const bondRadius = getRenderedBondRadius(
+            Math.max(bond.a.scale, bond.b.scale) * BOND_SCALE,
+            bond.order,
+        );
         const orientation = new THREE.Quaternion().setFromUnitVectors(
             new THREE.Vector3(0, 1, 0), dir.clone().normalize()
         );
@@ -468,7 +664,7 @@ function bondOrderOffsets(order: number, dir: THREE.Vector3, bondRadius: number)
     const perp = new THREE.Vector3();
     if (Math.abs(dir.x) < 0.9) perp.crossVectors(dir, new THREE.Vector3(1, 0, 0)).normalize();
     else perp.crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
-    const spacing = bondRadius * 2.5;
+    const spacing = bondRadius * MULTI_BOND_SPACING;
     if (order === 2) return [perp.clone().multiplyScalar(spacing), perp.clone().multiplyScalar(-spacing)];
     const perp2 = new THREE.Vector3().crossVectors(dir, perp).normalize();
     return [
@@ -478,14 +674,57 @@ function bondOrderOffsets(order: number, dir: THREE.Vector3, bondRadius: number)
     ];
 }
 
+function getRenderedBondRadius(baseBondRadius: number, order: number): number {
+    return baseBondRadius * Math.pow(MULTI_BOND_SHRINK, Math.max(0, order - 1));
+}
+
+function getBondHitRadius(baseBondRadius: number, order: number): number {
+    const renderedBondRadius = getRenderedBondRadius(baseBondRadius, order);
+    return order === 1
+        ? renderedBondRadius
+        : renderedBondRadius * (MULTI_BOND_SPACING + 1);
+}
+
+function renderBondHighlight(
+    group: THREE.Group,
+    start: THREE.Vector3,
+    end: THREE.Vector3,
+    baseBondRadius: number,
+    order: number,
+    material: THREE.Material,
+) {
+    const mid = start.clone().add(end).multiplyScalar(0.5);
+    const dir = end.clone().sub(start);
+    const len = dir.length();
+    const bondRadius = getRenderedBondRadius(baseBondRadius, order);
+    const orientation = new THREE.Quaternion().setFromUnitVectors(
+        new THREE.Vector3(0, 1, 0), dir.clone().normalize()
+    );
+
+    const offsets = bondOrderOffsets(order, dir, bondRadius);
+    for (const offset of offsets) {
+        const cyl = new THREE.Mesh(bondGeometry, material);
+        cyl.position.copy(mid).add(offset);
+        cyl.scale.set(bondRadius, len, bondRadius);
+        cyl.quaternion.copy(orientation);
+        group.add(cyl);
+    }
+}
+
 // --- GHOST PREVIEW ---
 
 function updateGhostPreview(controller: THREE.XRTargetRaySpace) {
     ghostGroup.clear();
     guidelineGroup.clear();
 
-    if (getSelectedBuildMode() === 'preset') {
+    const mode = getSelectedBuildMode();
+    if (mode === 'preset') {
         updateFragmentGhostPreview(controller);
+        return;
+    }
+
+    if (mode === 'bond') {
+        updateBondGhostPreview(controller);
         return;
     }
 
@@ -547,6 +786,59 @@ function updateGhostPreview(controller: THREE.XRTargetRaySpace) {
             guidelineGroup.add(sphere);
         }
     }
+}
+
+function updateBondGhostPreview(controller: THREE.XRTargetRaySpace) {
+    const cursorPos = getControllerWorldPos(controller);
+    if (!cursorPos) {
+        return;
+    }
+
+    const simCursorPos = worldToSimulationSpace(cursorPos);
+    const candidate = findBondPlacementCandidate(simCursorPos);
+    if (!candidate) {
+        return;
+    }
+
+    renderGhostAtomHighlight(candidate.atomA);
+    renderGhostAtomHighlight(candidate.atomB);
+    renderBondPlacementGuidelines(candidate);
+    renderGhostBond(
+        simulationToWorldSpace(candidate.atomA.position),
+        simulationToWorldSpace(candidate.atomB.position),
+        candidate.atomA.color,
+        candidate.atomB.color,
+        Math.max(candidate.atomA.scale, candidate.atomB.scale) * BOND_SCALE * simulationSpace.scale.x,
+        candidate.order,
+    );
+}
+
+function renderBondPlacementGuidelines(candidate: BondPlacementCandidate) {
+    const simScale = simulationSpace.scale.x;
+    const guidelineSets = [
+        ...calculateGuidelines([candidate.atomA], candidate.atomB.element, candidate.atomB.position, candidate.order),
+        ...calculateGuidelines([candidate.atomB], candidate.atomA.element, candidate.atomA.position, candidate.order),
+    ];
+
+    for (const gd of guidelineSets) {
+        const guideRadius = gd.core.scale * BOND_SCALE * 0.8 * simScale;
+        for (const pos of gd.positions) {
+            const sphere = new THREE.Mesh(guidelineGeometry, guideValidMat);
+            sphere.position.copy(simulationToWorldSpace(pos));
+            sphere.scale.setScalar(guideRadius);
+            guidelineGroup.add(sphere);
+        }
+    }
+}
+
+function renderGhostAtomHighlight(atom: Atom) {
+    const ghostMat = ghostMaterial.clone();
+    ghostMat.color = new THREE.Color(atom.color);
+
+    const ghostMesh = new THREE.Mesh(atomGeometry, ghostMat);
+    ghostMesh.position.copy(simulationToWorldSpace(atom.position));
+    ghostMesh.scale.setScalar(atom.scale / 2 * simulationSpace.scale.x * 1.1);
+    ghostGroup.add(ghostMesh);
 }
 
 function updateFragmentGhostPreview(controller: THREE.XRTargetRaySpace) {
@@ -613,13 +905,14 @@ function renderGhostBond(
     end: THREE.Vector3,
     startColor: number,
     endColor: number,
-    bondRadius: number,
+    baseBondRadius: number,
     order: number,
 ) {
     const mid = start.clone().add(end).multiplyScalar(0.5);
     const dir = end.clone().sub(start);
     const len = dir.length();
     const halfLen = len / 2;
+    const bondRadius = getRenderedBondRadius(baseBondRadius, order);
     const orientation = new THREE.Quaternion().setFromUnitVectors(
         new THREE.Vector3(0, 1, 0), dir.clone().normalize()
     );

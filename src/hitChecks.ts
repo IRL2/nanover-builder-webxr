@@ -56,6 +56,23 @@ export function sortedPositionsByDistance(point: THREE.Vector3, positions: THREE
 }
 
 
+export function distanceToSegment(
+    position: THREE.Vector3,
+    start: THREE.Vector3,
+    end: THREE.Vector3,
+): number {
+    const segment = end.clone().sub(start);
+    const segmentLengthSq = segment.lengthSq();
+    if (segmentLengthSq <= Number.EPSILON) {
+        return position.distanceTo(start);
+    }
+
+    const t = THREE.MathUtils.clamp(position.clone().sub(start).dot(segment) / segmentLengthSq, 0, 1);
+    const closestPoint = start.clone().add(segment.multiplyScalar(t));
+    return position.distanceTo(closestPoint);
+}
+
+
 export function findNearestAtom(
     position: THREE.Vector3,
     atoms: Atom[],

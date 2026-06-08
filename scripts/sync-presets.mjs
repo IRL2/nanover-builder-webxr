@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, '..');
-const unityPresetRoot = path.resolve(projectRoot, '..', 'Assets', 'StreamingAssets');
+const sourcePresetRoot = path.resolve(projectRoot, 'presets');
 const outputRoot = path.resolve(projectRoot, 'public', 'presets');
 
 const presetCategories = [
@@ -25,7 +25,7 @@ const manifest = {
 };
 
 for (const category of presetCategories) {
-    const sourceDir = path.join(unityPresetRoot, category.id);
+    const sourceDir = path.join(sourcePresetRoot, category.id);
     const targetDir = path.join(outputRoot, category.id);
     await mkdir(targetDir, { recursive: true });
 

@@ -99,6 +99,57 @@ export class MolecularStructure {
         return bond;
     }
 
+    getBondBetween(a: Atom, b: Atom): Bond | null {
+        return this.bonds.find(
+            bond => (bond.a === a && bond.b === b) || (bond.a === b && bond.b === a)
+        ) ?? null;
+    }
+
+    canSetBondOrder(a: Atom, b: Atom, order: number): boolean {
+        if (a === b || order < 1 || order > 3) {
+            return false;
+        }
+
+        const existingBond = this.getBondBetween(a, b);
+        const currentOrder = existingBond?.order ?? 0;
+        const additionalOrder = order - currentOrder;
+
+        if (additionalOrder <= 0) {
+            return true;
+        }
+
+        return a.emptyBonds >= additionalOrder && b.emptyBonds >= additionalOrder;
+    }
+
+    setBondOrder(a: Atom, b: Atom, order: number): Bond | null {
+        if (!this.canSetBondOrder(a, b, order)) {
+            return null;
+        }
+
+        const existingBond = this.getBondBetween(a, b);
+        if (existingBond) {
+            existingBond.order = order;
+            return existingBond;
+        }
+
+        const bond = new Bond(a, b, order, this.bonds.length);
+        bond.a.bonds.push(bond);
+        bond.b.bonds.push(bond);
+        this.bonds.push(bond);
+        return bond;
+    }
+
+    removeBondBetween(a: Atom, b: Atom): boolean {
+        const existingBond = this.getBondBetween(a, b);
+        if (!existingBond) {
+            return false;
+        }
+
+        this.removeBond(existingBond);
+        this.reindex();
+        return true;
+    }
+
     // not used
     removeAtom(atom: Atom): void {
         // remove bonds first

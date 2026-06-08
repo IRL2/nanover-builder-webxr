@@ -134,6 +134,7 @@ export function calculateGuidelines(
     cores: Atom[], // atoms to which to compute the guidelines
     newElement: string, // element symbol of the atom being placed (for bond length)
     pose: THREE.Vector3 | null,    // controlelr position
+    bondOrder: number = 1,
 ): GuidelineData[] {
     const results: GuidelineData[] = [];
 
@@ -147,7 +148,7 @@ export function calculateGuidelines(
 
         const directions = getGuidelineDirections(core, hardPoints, pose, realSteric);
 
-        const bondLen = MolecularStructure.idealBondLength(core, newElement);
+        const bondLen = MolecularStructure.idealBondLength(core, newElement, bondOrder);
         const positions = directions.map(
             d => core.position.clone().add(d.clone().multiplyScalar(bondLen))
         );

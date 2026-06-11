@@ -73,7 +73,7 @@ export function createElementSelector(
         fontSize: 6,
         color: 0xffffff,
         textAlign: 'center',
-        text: 'Builder Tool',
+        text: 'NanoVer Builder',
     });
 
     const helpText = new Text({

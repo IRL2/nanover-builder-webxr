@@ -401,7 +401,7 @@ function updateSelectionVisuals(): void {
         });
         secondaryText?.setProperties({
             fontSize: 4.6,
-            text: 'Left: place/update, right: delete',
+            text: 'Left: select 2 atoms, right: delete',
             color: 0xcccccc,
         });
     }

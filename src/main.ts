@@ -45,7 +45,6 @@ const BOND_SCALE = 0.15; // bond radius relative to atom scale
 const MULTI_BOND_SHRINK = 0.8;
 const MULTI_BOND_SPACING = 2.5;
 const BOND_SELECTION_MARGIN = 0.025;
-const BOND_DISTANCE_BIAS = 1.5;
 const atomGeometry = new THREE.SphereGeometry(1, 24, 16);
 const bondGeometry = new THREE.CylinderGeometry(1, 1, 1, 8);
 const guidelineGeometry = new THREE.SphereGeometry(1, 12, 8);
@@ -57,6 +56,8 @@ const fragmentConnectorMat = new THREE.MeshStandardMaterial({ color: 0x66ff99, t
 const fragmentHydrogenRemovalMat = new THREE.MeshStandardMaterial({ color: 0xffaa44, transparent: true, opacity: 0.45, depthWrite: false });
 const deleteHighlightGroup = new THREE.Group();
 const simulationSpace = new THREE.Group();
+const controllerRaycaster = new THREE.Raycaster();
+const controllerRayRotation = new THREE.Matrix4();
 
 interface SqueezeGestureState {
     active: boolean;
@@ -74,6 +75,7 @@ interface BondPlacementCandidate {
 }
 
 let selectedFragmentTemplate: MolecularStructure | null = null;
+let selectedBondAtom: Atom | null = null;
 let presetLoadRequestId = 0;
 const presetStructureCache = new Map<string, MolecularStructure>();
 
@@ -214,7 +216,7 @@ function setupXRControllers() {
         if (mode === 'preset') {
             placeSelectedFragment(this);
         } else if (mode === 'bond') {
-            placeBondAtPosition(worldPos);
+            placeBondAtPosition(this);
         } else {
             placeAtom(worldPos);
         }
@@ -282,6 +284,7 @@ function setupXRControllers() {
     scene.add(grip2);
 
     createElementSelector(controller2, renderer, () => {
+        clearBondPlacementSelection(false);
         ghostGroup.clear();
         guidelineGroup.clear();
         deleteHighlightGroup.clear();
@@ -475,21 +478,41 @@ function placeAtom(worldPos: THREE.Vector3 | undefined) {
     rebuildVisuals();
 }
 
-function placeBondAtPosition(worldPos: THREE.Vector3 | undefined) {
-    if (!worldPos) {
+function placeBondAtPosition(controller: THREE.XRTargetRaySpace) {
+    const hoveredAtom = findBondSelectionAtom(controller);
+    if (!hoveredAtom) {
+        clearBondPlacementSelection();
         return;
     }
 
-    const simPos = worldToSimulationSpace(worldPos);
-    const candidate = findBondPlacementCandidate(simPos);
-    if (!candidate || candidate.existingBond?.order === candidate.order) {
+    const sourceAtom = getSelectedBondAtom();
+    if (!sourceAtom) {
+        selectedBondAtom = hoveredAtom;
+        setPresetStatus('First atom selected; choose second atom');
+        return;
+    }
+
+    if (hoveredAtom === sourceAtom) {
+        clearBondPlacementSelection();
+        return;
+    }
+
+    const candidate = buildBondPlacementCandidate(sourceAtom, hoveredAtom);
+    if (!candidate) {
+        if (molecule.getBondBetween(sourceAtom, hoveredAtom)?.order === getSelectedBondOrder()) {
+            setPresetStatus('Those atoms already use the selected bond order');
+        } else {
+            setPresetStatus('Cannot create the selected bond between those atoms');
+        }
         return;
     }
 
     if (!molecule.setBondOrder(candidate.atomA, candidate.atomB, candidate.order)) {
+        setPresetStatus('Cannot create the selected bond between those atoms');
         return;
     }
 
+    clearBondPlacementSelection();
     rebuildVisuals();
 }
 
@@ -511,62 +534,64 @@ function snapToGuideline(element: string, cursorPos: THREE.Vector3, nearbyCores:
     return snapped;
 }
 
-function findBondPlacementCandidate(cursorPos: THREE.Vector3): BondPlacementCandidate | null {
+function findBondPlacementCandidate(targetAtom: Atom | null): BondPlacementCandidate | null {
+    const sourceAtom = getSelectedBondAtom();
+    if (!sourceAtom || !targetAtom || targetAtom === sourceAtom) {
+        return null;
+    }
+
+    return buildBondPlacementCandidate(sourceAtom, targetAtom);
+}
+
+function buildBondPlacementCandidate(atomA: Atom, atomB: Atom): BondPlacementCandidate | null {
     const desiredOrder = getSelectedBondOrder();
-    let bestCandidate: BondPlacementCandidate | null = null;
-    let bestScore = Number.POSITIVE_INFINITY;
-
-    for (const bond of molecule.bonds) {
-        if (!molecule.canSetBondOrder(bond.a, bond.b, desiredOrder)) {
-            continue;
-        }
-
-        const score = getBondSelectionScore(cursorPos, bond.a, bond.b, bond.order);
-        if (score === null || score >= bestScore) {
-            continue;
-        }
-
-        bestCandidate = {
-            atomA: bond.a,
-            atomB: bond.b,
-            existingBond: bond,
-            order: desiredOrder,
-        };
-        bestScore = score;
+    const existingBond = molecule.getBondBetween(atomA, atomB);
+    if (existingBond?.order === desiredOrder) {
+        return null;
     }
 
-    for (let i = 0; i < molecule.atoms.length; i++) {
-        const atomA = molecule.atoms[i];
-        for (let j = i + 1; j < molecule.atoms.length; j++) {
-            const atomB = molecule.atoms[j];
-            if (molecule.getBondBetween(atomA, atomB)) {
-                continue;
-            }
+    if (!molecule.canSetBondOrder(atomA, atomB, desiredOrder)) {
+        return null;
+    }
 
-            if (!molecule.canSetBondOrder(atomA, atomB, desiredOrder)) {
-                continue;
-            }
+    return {
+        atomA,
+        atomB,
+        existingBond,
+        order: desiredOrder,
+    };
+}
 
-            if (!isBondPlacementDistanceValid(atomA, atomB, desiredOrder)) {
-                continue;
-            }
+function getSelectedBondAtom(): Atom | null {
+    if (selectedBondAtom && !molecule.atoms.includes(selectedBondAtom)) {
+        selectedBondAtom = null;
+    }
 
-            const score = getBondSelectionScore(cursorPos, atomA, atomB, desiredOrder);
-            if (score === null || score >= bestScore) {
-                continue;
-            }
+    return selectedBondAtom;
+}
 
-            bestCandidate = {
-                atomA,
-                atomB,
-                existingBond: null,
-                order: desiredOrder,
-            };
-            bestScore = score;
+function clearBondPlacementSelection(updateStatus: boolean = true) {
+    selectedBondAtom = null;
+    if (updateStatus && getSelectedBuildMode() === 'bond') {
+        setPresetStatus('Bond editing ready');
+    }
+}
+
+function findBondSelectionAtom(controller: THREE.XRTargetRaySpace): Atom | null {
+    controller.updateMatrixWorld(true);
+    atomGroup.updateMatrixWorld(true);
+
+    controllerRayRotation.identity().extractRotation(controller.matrixWorld);
+    controllerRaycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+    controllerRaycaster.ray.direction.set(0, 0, -1).applyMatrix4(controllerRayRotation).normalize();
+
+    for (const intersection of controllerRaycaster.intersectObjects(atomGroup.children, false)) {
+        if (intersection.object.userData.atom instanceof Atom) {
+            return intersection.object.userData.atom;
         }
     }
 
-    return bestCandidate;
+    return null;
 }
 
 function findBondDeletionCandidate(cursorPos: THREE.Vector3): Bond | null {
@@ -601,11 +626,6 @@ function getBondSelectionScore(
 
     const midpointDistance = atomA.position.clone().add(atomB.position).multiplyScalar(0.5).distanceTo(cursorPos);
     return distance * 2 + midpointDistance * 0.25;
-}
-
-function isBondPlacementDistanceValid(atomA: Atom, atomB: Atom, order: number): boolean {
-    const idealLength = MolecularStructure.idealBondLength(atomA, atomB, order);
-    return atomA.position.distanceTo(atomB.position) <= idealLength * BOND_DISTANCE_BIAS;
 }
 
 function rebuildVisuals() {
@@ -789,19 +809,29 @@ function updateGhostPreview(controller: THREE.XRTargetRaySpace) {
 }
 
 function updateBondGhostPreview(controller: THREE.XRTargetRaySpace) {
-    const cursorPos = getControllerWorldPos(controller);
-    if (!cursorPos) {
+    const hoveredAtom = findBondSelectionAtom(controller);
+    const sourceAtom = getSelectedBondAtom();
+
+    if (!sourceAtom) {
+        if (hoveredAtom) {
+            renderGhostAtomHighlight(hoveredAtom);
+        }
         return;
     }
 
-    const simCursorPos = worldToSimulationSpace(cursorPos);
-    const candidate = findBondPlacementCandidate(simCursorPos);
+    renderGhostAtomHighlight(sourceAtom);
+
+    if (!hoveredAtom || hoveredAtom === sourceAtom) {
+        return;
+    }
+
+    renderGhostAtomHighlight(hoveredAtom);
+
+    const candidate = findBondPlacementCandidate(hoveredAtom);
     if (!candidate) {
         return;
     }
 
-    renderGhostAtomHighlight(candidate.atomA);
-    renderGhostAtomHighlight(candidate.atomB);
     renderBondPlacementGuidelines(candidate);
     renderGhostBond(
         simulationToWorldSpace(candidate.atomA.position),

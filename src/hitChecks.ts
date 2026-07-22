@@ -2,29 +2,6 @@ import * as THREE from 'three';
 import { Atom, MolecularStructure } from './molecularData.js';
 
 
-export function doBondsOverlap(a: Atom | string, b: Atom, biasFactor: number = 1.5): boolean {
-    const elA = typeof a === 'string' ? a : a.element;
-    const posA = typeof a === 'string' ? null : a.position;
-    if (!posA) return false;
-
-    let bias = biasFactor;
-
-    if (bias > 1 && b.bondedAtoms.length >= b.valence) bias = 1;
-
-    const idealLen = MolecularStructure.idealBondLength(elA, b.element, 1);
-    return posA.distanceTo(b.position) < idealLen * bias;
-}
-
-export function biasedSortedBondOverlap(
-    hitAtom: Atom,
-    candidates: Atom[],
-): Atom[] {
-    return candidates
-        .filter(c => c !== hitAtom && doBondsOverlap(hitAtom, c, 1.5))
-        .sort((a, b) => biasedDistance(a, hitAtom.position) - biasedDistance(b, hitAtom.position))
-        .slice(0, hitAtom.valence);
-}
-
 export function biasedSortedBondOverlapForNew(
     element: string,
     position: THREE.Vector3,

@@ -1,218 +1,80 @@
 import './style.css';
 import * as THREE from 'three';
-import { XRButton } from 'three/addons/webxr/XRButton.js';
-import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { Atom, Bond, MolecularStructure } from './molecularData.js';
-import { calculateGuidelines, emptyBondNumber } from './guidelines.js';
-import type { GuidelineData } from './guidelines.js';
-import { biasedSortedBondOverlapForNew, sortedPositionsByDistance, findNearestAtom, distanceToSegment } from './hitChecks.js';
-import {
-    createElementSelector,
-    getSelectedBondOrder,
-    getSelectedBuildMode,
-    getSelectedElement,
-    getSelectedPreset,
-    setPresetCatalog,
-    setPresetStatus,
-    updateElementSelector,
-} from './elementSelector.js';
-import { downloadPDB } from './exportPDB.js';
 import GUI from 'lil-gui';
-import { loadPresetManifest, loadPresetStructure } from './presetLibrary.js';
-import { applyFragmentPlacementPreview, buildFragmentPlacementPreview } from './fragmentPlacement.js';
-
-// --- STATE ---
-
-const molecule = new MolecularStructure();
-
-// Three.js objects
-let container: HTMLDivElement;
-let camera: THREE.PerspectiveCamera;
-let scene: THREE.Scene;
-let renderer: THREE.WebGLRenderer;
-let controller1: THREE.XRTargetRaySpace;
-let controller2: THREE.XRTargetRaySpace;
-let controls: OrbitControls;
-
-// Groups for rendering
-const atomGroup = new THREE.Group();
-const bondGroup = new THREE.Group();
-const ghostGroup = new THREE.Group();
-const guidelineGroup = new THREE.Group();
-
-const BOND_SCALE = 0.15; // bond radius relative to atom scale
-const MULTI_BOND_SHRINK = 0.8;
-const MULTI_BOND_SPACING = 2.5;
-const BOND_SELECTION_MARGIN = 0.025;
-const atomGeometry = new THREE.SphereGeometry(1, 24, 16);
-const bondGeometry = new THREE.CylinderGeometry(1, 1, 1, 8);
-const guidelineGeometry = new THREE.SphereGeometry(1, 12, 8);
-const ghostMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, depthWrite: false });
-const guideValidMat = new THREE.MeshStandardMaterial({ color: 0x44ff44, transparent: true, opacity: 0.35, depthWrite: false });
-const guideInvalidMat = new THREE.MeshStandardMaterial({ color: 0xff4444, transparent: true, opacity: 0.35, depthWrite: false });
-const deleteHighlightMat = new THREE.MeshStandardMaterial({ color: 0xff0000, transparent: true, opacity: 0.6, depthWrite: false });
-const fragmentConnectorMat = new THREE.MeshStandardMaterial({ color: 0x66ff99, transparent: true, opacity: 0.45, depthWrite: false });
-const fragmentHydrogenRemovalMat = new THREE.MeshStandardMaterial({ color: 0xffaa44, transparent: true, opacity: 0.45, depthWrite: false });
-const deleteHighlightGroup = new THREE.Group();
-const simulationSpace = new THREE.Group();
-const controllerRaycaster = new THREE.Raycaster();
-const controllerRayRotation = new THREE.Matrix4();
-
-interface SqueezeGestureState {
-    active: boolean;
-    initialDistance: number;
-    initialMidpoint: THREE.Vector3;
-    initialControllerDir: THREE.Vector3;
-    initialSimulationSpaceMatrix: THREE.Matrix4;
-}
-
-interface BondPlacementCandidate {
-    atomA: Atom;
-    atomB: Atom;
-    existingBond: Bond | null;
-    order: number;
-}
-
-let selectedFragmentTemplate: MolecularStructure | null = null;
-let selectedBondAtom: Atom | null = null;
-let presetLoadRequestId = 0;
-const presetStructureCache = new Map<string, MolecularStructure>();
+import { downloadPDB } from './exportPDB.js';
+import { getSelectedBuildMode, updateElementSelector } from './elementSelector.js';
+import { scene, camera, renderer, setupScene } from './scene.js';
+import { molecule, simulationSpace } from './state.js';
+import { controller1, controller2, setupXRControllers, getControllerWorldPos } from './xrInput.js';
+import { checkStartTwoHandGesture, endTwoHandGesture, updateTwoHandGesture } from './gestures.js';
+import { placeAtom, updateAtomGhostPreview } from './atomTools.js';
+import { placeBondAtPosition, updateBondGhostPreview, clearBondPlacementSelection } from './bondTools.js';
+import { removeAtomAtPosition, removeBondAtPosition, updateDeleteHighlight, deleteHighlightGroup } from './deletion.js';
+import { setupPresetLibrary, refreshSelectedFragment, placeSelectedFragment, updateFragmentGhostPreview } from './fragmentTools.js';
+import {
+    gizmoGroup,
+    handleRotationSelectStart,
+    handleRotationSelectEnd,
+    updateRotationDrag,
+    isRotationDragging,
+    updateRotationPreview,
+    clearRotationSelection,
+} from './rotationTools.js';
+import { atomGroup, bondGroup } from './visuals/moleculeView.js';
+import { ghostGroup, guidelineGroup } from './visuals/ghostView.js';
 
 init();
 
-function init() {
-    container = document.createElement('div');
-    document.body.appendChild(container);
+function init(): void {
+    setupScene();
 
-    scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x222222);
-
-    // camera
-    camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.01, 50);
-    camera.position.set(0, 1.6, 3);
-
-    const grid = new THREE.GridHelper(4, 10, 0x333333, 0x222222);
-    scene.add(grid);
-
-    // lights
-    // scene.add(new THREE.HemisphereLight(0x888877, 0x777788, 3));
-    const light = new THREE.HemisphereLight( 0xffffff, 0x888888, 3 );
-	light.position.set( 0, 6, 0 );
-    scene.add(light);
-
-    // renderer
-    renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setAnimationLoop(animate);
-    renderer.xr.enabled = true;
-    container.appendChild(renderer.domElement);
-
-    controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(0, 1.2, 0);
-    controls.update();
-
-    document.body.appendChild(XRButton.createButton(renderer));
-
-    // simulation space hierarchy
     simulationSpace.add(atomGroup);
     simulationSpace.add(bondGroup);
     simulationSpace.add(deleteHighlightGroup);
-
+    simulationSpace.add(gizmoGroup);
     scene.add(simulationSpace);
     scene.add(ghostGroup);
     scene.add(guidelineGroup);
 
-    setupXRControllers();
+    setupXRControllers(() => {
+        clearBondPlacementSelection(false);
+        clearRotationSelection();
+        ghostGroup.clear();
+        guidelineGroup.clear();
+        deleteHighlightGroup.clear();
+        void refreshSelectedFragment();
+    });
 
-    window.addEventListener('resize', onWindowResize);
+    wireControllerEvents();
 
-    // GUI
     const gui = new GUI();
     gui.add({ exportPDB: () => downloadPDB(molecule) }, 'exportPDB').name('Export PDB');
+
+    renderer.setAnimationLoop(animate);
+
     void setupPresetLibrary();
 }
 
-async function setupPresetLibrary(): Promise<void> {
-    try {
-        const manifest = await loadPresetManifest();
-        const categories = manifest.categories.filter(category => category.presets.length > 0);
-        setPresetCatalog(categories);
-        setPresetStatus(categories.length > 0 ? 'Preset library ready' : 'No presets available');
-        void refreshSelectedFragment();
-    } catch (error) {
-        console.error('Failed to initialise the preset library.', error);
-        setPresetCatalog([]);
-        selectedFragmentTemplate = null;
-        setPresetStatus('Preset library unavailable');
-    }
-}
-
-async function refreshSelectedFragment(): Promise<void> {
-    const mode = getSelectedBuildMode();
-    const preset = getSelectedPreset();
-
-    if (mode !== 'preset') {
-        presetLoadRequestId += 1;
-        selectedFragmentTemplate = null;
-        setPresetStatus(mode === 'bond' ? 'Bond editing ready' : 'Atom placement ready');
-        return;
-    }
-
-    if (!preset) {
-        presetLoadRequestId += 1;
-        selectedFragmentTemplate = null;
-        setPresetStatus('No preset selected');
-        return;
-    }
-
-    const cached = presetStructureCache.get(preset.path);
-    if (cached) {
-        selectedFragmentTemplate = cached;
-        setPresetStatus(`${preset.label} ready`);
-        return;
-    }
-
-    const requestId = ++presetLoadRequestId;
-    selectedFragmentTemplate = null;
-    setPresetStatus(`Loading ${preset.label}...`);
-
-    try {
-        const structure = await loadPresetStructure(preset);
-        if (requestId !== presetLoadRequestId) {
-            return;
+function wireControllerEvents(): void {
+    function onSelectStart(this: THREE.XRTargetRaySpace) {
+        this.userData.isSelecting = true;
+        if (getSelectedBuildMode() === 'rotate' && this.userData.id === 0) {
+            handleRotationSelectStart(this);
         }
-
-        presetStructureCache.set(preset.path, structure);
-        selectedFragmentTemplate = structure;
-        setPresetStatus(`${preset.label} ready`);
-    } catch (error) {
-        if (requestId !== presetLoadRequestId) {
-            return;
-        }
-
-        console.error(`Failed to load preset ${preset.label}.`, error);
-        selectedFragmentTemplate = null;
-        setPresetStatus(`Failed to load ${preset.label}`);
     }
-}
 
-// --- XR CONTROLLERS ---
-const squeezeState: SqueezeGestureState = {
-    active: false,
-    initialDistance: 0,
-    initialMidpoint: new THREE.Vector3(),
-    initialControllerDir: new THREE.Vector3(),
-    initialSimulationSpaceMatrix: new THREE.Matrix4(),
-};
-
-function setupXRControllers() {
-    function onSelectStart(this: THREE.XRTargetRaySpace) { this.userData.isSelecting = true; }
     function onSelectEnd(this: THREE.XRTargetRaySpace) {
         this.userData.isSelecting = false;
         const mode = getSelectedBuildMode();
         const worldPos = this.userData.lastWorldPos as THREE.Vector3 | undefined;
+
+        if (mode === 'rotate') {
+            if (this.userData.id === 0) {
+                handleRotationSelectEnd(this);
+            }
+            return;
+        }
+
         if (mode === 'preset') {
             placeSelectedFragment(this);
         } else if (mode === 'bond') {
@@ -222,12 +84,14 @@ function setupXRControllers() {
         }
     }
 
-    function onSelectStartRight(this: THREE.XRTargetRaySpace) { this.userData.isSelecting = true; }
     function onSelectEndRight(this: THREE.XRTargetRaySpace) {
         this.userData.isSelecting = false;
+        const mode = getSelectedBuildMode();
+        if (mode === 'rotate') return;
+
         const worldPos = this.userData.lastWorldPos as THREE.Vector3 | undefined;
         if (worldPos) {
-            if (getSelectedBuildMode() === 'bond') {
+            if (mode === 'bond') {
                 removeBondAtPosition(worldPos);
             } else {
                 removeAtomAtPosition(worldPos);
@@ -239,805 +103,26 @@ function setupXRControllers() {
         this.userData.isSqueezing = true;
         checkStartTwoHandGesture();
     }
+
     function onSqueezeEnd(this: THREE.XRTargetRaySpace) {
         this.userData.isSqueezing = false;
         endTwoHandGesture();
     }
 
-    controller1 = renderer.xr.getController(0);
     controller1.addEventListener('selectstart', onSelectStart);
     controller1.addEventListener('selectend', onSelectEnd);
     controller1.addEventListener('squeezestart', onSqueezeStart);
     controller1.addEventListener('squeezeend', onSqueezeEnd);
-    controller1.userData.id = 0;
-    scene.add(controller1);
 
-    controller2 = renderer.xr.getController(1);
-    controller2.addEventListener('selectstart', onSelectStartRight);
+    controller2.addEventListener('selectstart', onSelectStart);
     controller2.addEventListener('selectend', onSelectEndRight);
     controller2.addEventListener('squeezestart', onSqueezeStart);
     controller2.addEventListener('squeezeend', onSqueezeEnd);
-    controller2.userData.id = 1;
-    scene.add(controller2);
-
-    const pivotGeom = new THREE.IcosahedronGeometry(0.01, 3);
-    const pivotMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-    
-    const pivot1 = new THREE.Mesh(pivotGeom, pivotMat);
-    pivot1.name = 'pivot';
-    pivot1.position.set(-0.02, 0, -0.1);
-    controller1.add(pivot1);
-    
-    const pivot2 = new THREE.Mesh(pivotGeom, pivotMat);
-    pivot2.name = 'pivot';
-    pivot2.position.set(0.02, 0, -0.1);
-    controller2.add(pivot2);
-
-    const modelFactory = new XRControllerModelFactory();
-
-    const grip1 = renderer.xr.getControllerGrip(0);
-    grip1.add(modelFactory.createControllerModel(grip1));
-    scene.add(grip1);
-
-    const grip2 = renderer.xr.getControllerGrip(1);
-    grip2.add(modelFactory.createControllerModel(grip2));
-    scene.add(grip2);
-
-    createElementSelector(controller2, renderer, () => {
-        clearBondPlacementSelection(false);
-        ghostGroup.clear();
-        guidelineGroup.clear();
-        deleteHighlightGroup.clear();
-        void refreshSelectedFragment();
-    });
 }
-
-// --- TWO-HAND SQUEEZE GESTURE (Scale/Rotate) ---
-
-function checkStartTwoHandGesture() {
-    if (controller1.userData.isSqueezing && controller2.userData.isSqueezing) {
-        const pos1 = getControllerWorldPos(controller1);
-        const pos2 = getControllerWorldPos(controller2);
-        if (!pos1 || !pos2) return;
-
-        squeezeState.active = true;
-        squeezeState.initialDistance = pos1.distanceTo(pos2);
-        squeezeState.initialMidpoint = pos1.clone().add(pos2).multiplyScalar(0.5);
-        squeezeState.initialControllerDir = pos2.clone().sub(pos1).normalize();
-        squeezeState.initialSimulationSpaceMatrix = simulationSpace.matrix.clone();
-    }
-}
-
-function endTwoHandGesture() {
-    squeezeState.active = false;
-}
-
-function updateTwoHandGesture() {
-    if (!squeezeState.active) return;
-
-    const pos1 = getControllerWorldPos(controller1);
-    const pos2 = getControllerWorldPos(controller2);
-    if (!pos1 || !pos2) return;
-
-    const currentDistance = pos1.distanceTo(pos2);
-    const currentMidpoint = pos1.clone().add(pos2).multiplyScalar(0.5);
-    const currentDir = pos2.clone().sub(pos1).normalize();
-
-    const scaleFactor = squeezeState.initialDistance > 0.01
-        ? currentDistance / squeezeState.initialDistance
-        : 1;
-
-    const rotationQuat = new THREE.Quaternion().setFromUnitVectors(
-        squeezeState.initialControllerDir,
-        currentDir
-    );
-
-    simulationSpace.matrix.copy(squeezeState.initialSimulationSpaceMatrix);
-    simulationSpace.matrixAutoUpdate = false;
-
-    const tempMatrix = new THREE.Matrix4();
-
-    tempMatrix.makeTranslation(
-        -squeezeState.initialMidpoint.x,
-        -squeezeState.initialMidpoint.y,
-        -squeezeState.initialMidpoint.z
-    );
-    simulationSpace.matrix.premultiply(tempMatrix);
-
-    tempMatrix.makeScale(scaleFactor, scaleFactor, scaleFactor);
-    simulationSpace.matrix.premultiply(tempMatrix);
-
-    tempMatrix.makeRotationFromQuaternion(rotationQuat);
-    simulationSpace.matrix.premultiply(tempMatrix);
-
-    tempMatrix.makeTranslation(currentMidpoint.x, currentMidpoint.y, currentMidpoint.z);
-    simulationSpace.matrix.premultiply(tempMatrix);
-
-    simulationSpace.matrix.decompose(simulationSpace.position, simulationSpace.quaternion, simulationSpace.scale);
-}
-
-// --- ATOM REMOVAL ---
-
-function removeAtomAtPosition(worldPos: THREE.Vector3 | undefined) {
-    if (!worldPos) {
-        return;
-    }
-
-    const simPos = worldToSimulationSpace(worldPos);
-    const atom = findNearestAtom(simPos, molecule.atoms, 0.08);
-    if (atom) {
-        molecule.removeAtom(atom);
-        rebuildVisuals();
-    }
-}
-
-function removeBondAtPosition(worldPos: THREE.Vector3 | undefined) {
-    if (!worldPos) {
-        return;
-    }
-
-    const simPos = worldToSimulationSpace(worldPos);
-    const bond = findBondDeletionCandidate(simPos);
-    if (!bond) {
-        return;
-    }
-
-    molecule.removeBond(bond);
-    molecule.reindex();
-    rebuildVisuals();
-}
-
-function updateDeleteHighlight(cursorPos: THREE.Vector3 | null) {
-    deleteHighlightGroup.clear();
-
-    if (!cursorPos) {
-        return;
-    }
-
-    if (getSelectedBuildMode() === 'bond') {
-        updateBondDeleteHighlight(cursorPos);
-        return;
-    }
-
-    updateAtomDeleteHighlight(cursorPos);
-}
-
-function updateAtomDeleteHighlight(cursorPos: THREE.Vector3) {
-    const simPos = worldToSimulationSpace(cursorPos);
-    const atom = findNearestAtom(simPos, molecule.atoms, 0.08);
-    if (!atom) {
-        return;
-    }
-
-    renderDeleteAtomHighlight(atom);
-
-    for (const bond of atom.bonds) {
-        const other = bond.a === atom ? bond.b : bond.a;
-        renderBondHighlight(
-            deleteHighlightGroup,
-            atom.position,
-            other.position,
-            Math.max(atom.scale, other.scale) * BOND_SCALE * 1.3,
-            bond.order,
-            deleteHighlightMat,
-        );
-    }
-}
-
-function updateBondDeleteHighlight(cursorPos: THREE.Vector3) {
-    const simPos = worldToSimulationSpace(cursorPos);
-    const bond = findBondDeletionCandidate(simPos);
-    if (!bond) {
-        return;
-    }
-
-    renderDeleteAtomHighlight(bond.a);
-    renderDeleteAtomHighlight(bond.b);
-    renderBondHighlight(
-        deleteHighlightGroup,
-        bond.a.position,
-        bond.b.position,
-        Math.max(bond.a.scale, bond.b.scale) * BOND_SCALE * 1.3,
-        bond.order,
-        deleteHighlightMat,
-    );
-}
-
-function renderDeleteAtomHighlight(atom: Atom) {
-    const highlightMesh = new THREE.Mesh(atomGeometry, deleteHighlightMat);
-    highlightMesh.position.copy(atom.position);
-    highlightMesh.scale.setScalar(atom.scale / 2 * 1.3);
-    deleteHighlightGroup.add(highlightMesh);
-}
-
-// --- ELEMENT PLACEMENT ---
-
-function placeAtom(worldPos: THREE.Vector3 | undefined) {
-    if (!worldPos) {
-        return;
-    }
-
-    const simPos = worldToSimulationSpace(worldPos);
-
-    const el = getSelectedElement();
-    const nearby = biasedSortedBondOverlapForNew(el, simPos, molecule.atoms);
-
-    let finalPos = simPos.clone();
-    if (nearby.length > 0) {
-        finalPos = snapToGuideline(el, simPos, nearby);
-    }
-
-    const newAtom = molecule.addAtom(el, finalPos);
-
-    for (const target of nearby) {
-        if (newAtom.emptyBonds <= 0) break;
-        if (target.emptyBonds <= 0) continue;
-        molecule.addBond(newAtom, target, 1);
-    }
-
-    rebuildVisuals();
-}
-
-function placeBondAtPosition(controller: THREE.XRTargetRaySpace) {
-    const hoveredAtom = findBondSelectionAtom(controller);
-    if (!hoveredAtom) {
-        clearBondPlacementSelection();
-        return;
-    }
-
-    const sourceAtom = getSelectedBondAtom();
-    if (!sourceAtom) {
-        selectedBondAtom = hoveredAtom;
-        setPresetStatus('First atom selected; choose second atom');
-        return;
-    }
-
-    if (hoveredAtom === sourceAtom) {
-        clearBondPlacementSelection();
-        return;
-    }
-
-    const candidate = buildBondPlacementCandidate(sourceAtom, hoveredAtom);
-    if (!candidate) {
-        if (molecule.getBondBetween(sourceAtom, hoveredAtom)?.order === getSelectedBondOrder()) {
-            setPresetStatus('Those atoms already use the selected bond order');
-        } else {
-            setPresetStatus('Cannot create the selected bond between those atoms');
-        }
-        return;
-    }
-
-    if (!molecule.setBondOrder(candidate.atomA, candidate.atomB, candidate.order)) {
-        setPresetStatus('Cannot create the selected bond between those atoms');
-        return;
-    }
-
-    clearBondPlacementSelection();
-    rebuildVisuals();
-}
-
-function snapToGuideline(element: string, cursorPos: THREE.Vector3, nearbyCores: Atom[]): THREE.Vector3 {
-    const guidelines = calculateGuidelines(nearbyCores, element, cursorPos);
-    const snapped = cursorPos.clone();
-
-    for (const gd of guidelines) {
-        if (gd.positions.length === 0) continue;
-
-        const sorted = sortedPositionsByDistance(cursorPos, gd.positions);
-        const closest = gd.positions[sorted[0]];
-        const diff = closest.clone().sub(snapped);
-        const dist = diff.length();
-        // strong when close, weak when far
-        const strength = 1 / Math.pow(1 + 4 * dist, 2);
-        snapped.add(diff.multiplyScalar(strength));
-    }
-    return snapped;
-}
-
-function findBondPlacementCandidate(targetAtom: Atom | null): BondPlacementCandidate | null {
-    const sourceAtom = getSelectedBondAtom();
-    if (!sourceAtom || !targetAtom || targetAtom === sourceAtom) {
-        return null;
-    }
-
-    return buildBondPlacementCandidate(sourceAtom, targetAtom);
-}
-
-function buildBondPlacementCandidate(atomA: Atom, atomB: Atom): BondPlacementCandidate | null {
-    const desiredOrder = getSelectedBondOrder();
-    const existingBond = molecule.getBondBetween(atomA, atomB);
-    if (existingBond?.order === desiredOrder) {
-        return null;
-    }
-
-    if (!molecule.canSetBondOrder(atomA, atomB, desiredOrder)) {
-        return null;
-    }
-
-    return {
-        atomA,
-        atomB,
-        existingBond,
-        order: desiredOrder,
-    };
-}
-
-function getSelectedBondAtom(): Atom | null {
-    if (selectedBondAtom && !molecule.atoms.includes(selectedBondAtom)) {
-        selectedBondAtom = null;
-    }
-
-    return selectedBondAtom;
-}
-
-function clearBondPlacementSelection(updateStatus: boolean = true) {
-    selectedBondAtom = null;
-    if (updateStatus && getSelectedBuildMode() === 'bond') {
-        setPresetStatus('Bond editing ready');
-    }
-}
-
-function findBondSelectionAtom(controller: THREE.XRTargetRaySpace): Atom | null {
-    controller.updateMatrixWorld(true);
-    atomGroup.updateMatrixWorld(true);
-
-    controllerRayRotation.identity().extractRotation(controller.matrixWorld);
-    controllerRaycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
-    controllerRaycaster.ray.direction.set(0, 0, -1).applyMatrix4(controllerRayRotation).normalize();
-
-    for (const intersection of controllerRaycaster.intersectObjects(atomGroup.children, false)) {
-        if (intersection.object.userData.atom instanceof Atom) {
-            return intersection.object.userData.atom;
-        }
-    }
-
-    return null;
-}
-
-function findBondDeletionCandidate(cursorPos: THREE.Vector3): Bond | null {
-    let bestBond: Bond | null = null;
-    let bestScore = Number.POSITIVE_INFINITY;
-
-    for (const bond of molecule.bonds) {
-        const score = getBondSelectionScore(cursorPos, bond.a, bond.b, bond.order);
-        if (score === null || score >= bestScore) {
-            continue;
-        }
-
-        bestBond = bond;
-        bestScore = score;
-    }
-
-    return bestBond;
-}
-
-function getBondSelectionScore(
-    cursorPos: THREE.Vector3,
-    atomA: Atom,
-    atomB: Atom,
-    visibleOrder: number,
-): number | null {
-    const baseBondRadius = Math.max(atomA.scale, atomB.scale) * BOND_SCALE;
-    const maxDistance = getBondHitRadius(baseBondRadius, visibleOrder) + BOND_SELECTION_MARGIN;
-    const distance = distanceToSegment(cursorPos, atomA.position, atomB.position);
-    if (distance > maxDistance) {
-        return null;
-    }
-
-    const midpointDistance = atomA.position.clone().add(atomB.position).multiplyScalar(0.5).distanceTo(cursorPos);
-    return distance * 2 + midpointDistance * 0.25;
-}
-
-function rebuildVisuals() {
-    atomGroup.clear();
-    bondGroup.clear();
-
-    for (const atom of molecule.atoms) {
-        const color = new THREE.Color(atom.color);
-        const mat = new THREE.MeshPhongMaterial({ color });
-        const mesh = new THREE.Mesh(atomGeometry, mat);
-        mesh.position.copy(atom.position);
-        mesh.scale.setScalar(atom.scale / 2);
-        mesh.userData.atom = atom;
-        atomGroup.add(mesh);
-    }
-
-    for (const bond of molecule.bonds) {
-        const start = bond.a.position;
-        const end = bond.b.position;
-        const mid = start.clone().add(end).multiplyScalar(0.5);
-        const dir = end.clone().sub(start);
-        const len = dir.length();
-        const halfLen = len / 2;
-        const bondRadius = getRenderedBondRadius(
-            Math.max(bond.a.scale, bond.b.scale) * BOND_SCALE,
-            bond.order,
-        );
-        const orientation = new THREE.Quaternion().setFromUnitVectors(
-            new THREE.Vector3(0, 1, 0), dir.clone().normalize()
-        );
-
-        const offsets = bondOrderOffsets(bond.order, dir, bondRadius);
-        for (const offset of offsets) {
-
-            const midA = start.clone().add(mid).multiplyScalar(0.5);
-            const matA = new THREE.MeshStandardMaterial({ color: bond.a.color, roughness: 0.6, metalness: 0.1 });
-            const meshA = new THREE.Mesh(bondGeometry, matA);
-            meshA.position.copy(midA).add(offset);
-            meshA.scale.set(bondRadius, halfLen, bondRadius);
-            meshA.quaternion.copy(orientation);
-            bondGroup.add(meshA);
-
-            const midB = mid.clone().add(end).multiplyScalar(0.5);
-            const matB = new THREE.MeshStandardMaterial({ color: bond.b.color, roughness: 0.6, metalness: 0.1 });
-            const meshB = new THREE.Mesh(bondGeometry, matB);
-            meshB.position.copy(midB).add(offset);
-            meshB.scale.set(bondRadius, halfLen, bondRadius);
-            meshB.quaternion.copy(orientation);
-            bondGroup.add(meshB);
-        }
-    }
-}
-
-function bondOrderOffsets(order: number, dir: THREE.Vector3, bondRadius: number): THREE.Vector3[] {
-    if (order === 1) return [new THREE.Vector3()];
-    const perp = new THREE.Vector3();
-    if (Math.abs(dir.x) < 0.9) perp.crossVectors(dir, new THREE.Vector3(1, 0, 0)).normalize();
-    else perp.crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
-    const spacing = bondRadius * MULTI_BOND_SPACING;
-    if (order === 2) return [perp.clone().multiplyScalar(spacing), perp.clone().multiplyScalar(-spacing)];
-    const perp2 = new THREE.Vector3().crossVectors(dir, perp).normalize();
-    return [
-        perp.clone().multiplyScalar(spacing),
-        perp.clone().multiplyScalar(-spacing / 2).add(perp2.clone().multiplyScalar(spacing * 0.866)),
-        perp.clone().multiplyScalar(-spacing / 2).add(perp2.clone().multiplyScalar(-spacing * 0.866)),
-    ];
-}
-
-function getRenderedBondRadius(baseBondRadius: number, order: number): number {
-    return baseBondRadius * Math.pow(MULTI_BOND_SHRINK, Math.max(0, order - 1));
-}
-
-function getBondHitRadius(baseBondRadius: number, order: number): number {
-    const renderedBondRadius = getRenderedBondRadius(baseBondRadius, order);
-    return order === 1
-        ? renderedBondRadius
-        : renderedBondRadius * (MULTI_BOND_SPACING + 1);
-}
-
-function renderBondHighlight(
-    group: THREE.Group,
-    start: THREE.Vector3,
-    end: THREE.Vector3,
-    baseBondRadius: number,
-    order: number,
-    material: THREE.Material,
-) {
-    const mid = start.clone().add(end).multiplyScalar(0.5);
-    const dir = end.clone().sub(start);
-    const len = dir.length();
-    const bondRadius = getRenderedBondRadius(baseBondRadius, order);
-    const orientation = new THREE.Quaternion().setFromUnitVectors(
-        new THREE.Vector3(0, 1, 0), dir.clone().normalize()
-    );
-
-    const offsets = bondOrderOffsets(order, dir, bondRadius);
-    for (const offset of offsets) {
-        const cyl = new THREE.Mesh(bondGeometry, material);
-        cyl.position.copy(mid).add(offset);
-        cyl.scale.set(bondRadius, len, bondRadius);
-        cyl.quaternion.copy(orientation);
-        group.add(cyl);
-    }
-}
-
-// --- GHOST PREVIEW ---
-
-function updateGhostPreview(controller: THREE.XRTargetRaySpace) {
-    ghostGroup.clear();
-    guidelineGroup.clear();
-
-    const mode = getSelectedBuildMode();
-    if (mode === 'preset') {
-        updateFragmentGhostPreview(controller);
-        return;
-    }
-
-    if (mode === 'bond') {
-        updateBondGhostPreview(controller);
-        return;
-    }
-
-    const cursorPos = getControllerWorldPos(controller);
-    if (!cursorPos) {
-        return;
-    }
-
-    const simCursorPos = worldToSimulationSpace(cursorPos);
-
-    const el = getSelectedElement();
-    const nearby = biasedSortedBondOverlapForNew(el, simCursorPos, molecule.atoms);
-    let ghostPos = cursorPos.clone();
-    let guidelines: GuidelineData[] = [];
-
-    if (nearby.length > 0) {
-        guidelines = calculateGuidelines(nearby, el, simCursorPos);
-        const snappedSimPos = snapToGuideline(el, simCursorPos, nearby);
-        ghostPos = simulationToWorldSpace(snappedSimPos);
-    }
-
-    const tempAtom = new Atom(el, ghostPos);
-    const ghostColor = new THREE.Color(tempAtom.color);
-    const ghostMat = ghostMaterial.clone();
-    ghostMat.color = ghostColor;
-    const ghostMesh = new THREE.Mesh(atomGeometry, ghostMat);
-    ghostMesh.position.copy(ghostPos);
-    ghostMesh.scale.setScalar(tempAtom.scale / 2 * simulationSpace.scale.x);
-    ghostGroup.add(ghostMesh);
-
-    // ghost bonds
-    for (const target of nearby) {
-        if (target.emptyBonds <= 0) continue;
-        const start = ghostPos;
-        const end = simulationToWorldSpace(target.position);
-        const mid = start.clone().add(end).multiplyScalar(0.5);
-        const dir = end.clone().sub(start);
-        const len = dir.length();
-        const bondRadius = Math.max(tempAtom.scale, target.scale) * BOND_SCALE * simulationSpace.scale.x;
-
-        const lineMat = ghostMaterial.clone();
-        lineMat.color = ghostColor;
-        const cyl = new THREE.Mesh(bondGeometry, lineMat);
-        cyl.position.copy(mid);
-        cyl.scale.set(bondRadius, len, bondRadius);
-        cyl.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
-        ghostGroup.add(cyl);
-    }
-
-    // guideline spheres
-    for (const gd of guidelines) {
-        const valid = emptyBondNumber(gd.core) > 0;
-        const mat = valid ? guideValidMat : guideInvalidMat;
-        const guideRadius = gd.core.scale * BOND_SCALE * 0.8 * simulationSpace.scale.x;
-        for (const pos of gd.positions) {
-            const sphere = new THREE.Mesh(guidelineGeometry, mat);
-            sphere.position.copy(simulationToWorldSpace(pos));
-            sphere.scale.setScalar(guideRadius);
-            guidelineGroup.add(sphere);
-        }
-    }
-}
-
-function updateBondGhostPreview(controller: THREE.XRTargetRaySpace) {
-    const hoveredAtom = findBondSelectionAtom(controller);
-    const sourceAtom = getSelectedBondAtom();
-
-    if (!sourceAtom) {
-        if (hoveredAtom) {
-            renderGhostAtomHighlight(hoveredAtom);
-        }
-        return;
-    }
-
-    renderGhostAtomHighlight(sourceAtom);
-
-    if (!hoveredAtom || hoveredAtom === sourceAtom) {
-        return;
-    }
-
-    renderGhostAtomHighlight(hoveredAtom);
-
-    const candidate = findBondPlacementCandidate(hoveredAtom);
-    if (!candidate) {
-        return;
-    }
-
-    renderBondPlacementGuidelines(candidate);
-    renderGhostBond(
-        simulationToWorldSpace(candidate.atomA.position),
-        simulationToWorldSpace(candidate.atomB.position),
-        candidate.atomA.color,
-        candidate.atomB.color,
-        Math.max(candidate.atomA.scale, candidate.atomB.scale) * BOND_SCALE * simulationSpace.scale.x,
-        candidate.order,
-    );
-}
-
-function renderBondPlacementGuidelines(candidate: BondPlacementCandidate) {
-    const simScale = simulationSpace.scale.x;
-    const guidelineSets = [
-        ...calculateGuidelines([candidate.atomA], candidate.atomB.element, candidate.atomB.position, candidate.order),
-        ...calculateGuidelines([candidate.atomB], candidate.atomA.element, candidate.atomA.position, candidate.order),
-    ];
-
-    for (const gd of guidelineSets) {
-        const guideRadius = gd.core.scale * BOND_SCALE * 0.8 * simScale;
-        for (const pos of gd.positions) {
-            const sphere = new THREE.Mesh(guidelineGeometry, guideValidMat);
-            sphere.position.copy(simulationToWorldSpace(pos));
-            sphere.scale.setScalar(guideRadius);
-            guidelineGroup.add(sphere);
-        }
-    }
-}
-
-function renderGhostAtomHighlight(atom: Atom) {
-    const ghostMat = ghostMaterial.clone();
-    ghostMat.color = new THREE.Color(atom.color);
-
-    const ghostMesh = new THREE.Mesh(atomGeometry, ghostMat);
-    ghostMesh.position.copy(simulationToWorldSpace(atom.position));
-    ghostMesh.scale.setScalar(atom.scale / 2 * simulationSpace.scale.x * 1.1);
-    ghostGroup.add(ghostMesh);
-}
-
-function updateFragmentGhostPreview(controller: THREE.XRTargetRaySpace) {
-    if (!selectedFragmentTemplate) {
-        return;
-    }
-
-    const fragmentTransform = getControllerSimulationMatrix(controller);
-    if (!fragmentTransform) {
-        return;
-    }
-
-    const preview = buildFragmentPlacementPreview(molecule, selectedFragmentTemplate, fragmentTransform);
-    renderGhostStructure(preview.fragment);
-    renderFragmentConnections(preview);
-}
-
-function renderGhostStructure(structure: MolecularStructure) {
-    const simScale = simulationSpace.scale.x;
-
-    for (const atom of structure.atoms) {
-        const ghostMat = ghostMaterial.clone();
-        ghostMat.color = new THREE.Color(atom.color);
-
-        const ghostMesh = new THREE.Mesh(atomGeometry, ghostMat);
-        ghostMesh.position.copy(simulationToWorldSpace(atom.position));
-        ghostMesh.scale.setScalar(atom.scale / 2 * simScale);
-        ghostGroup.add(ghostMesh);
-    }
-
-    for (const bond of structure.bonds) {
-        const start = simulationToWorldSpace(bond.a.position);
-        const end = simulationToWorldSpace(bond.b.position);
-        renderGhostBond(start, end, bond.a.color, bond.b.color, Math.max(bond.a.scale, bond.b.scale) * BOND_SCALE * simScale, bond.order);
-    }
-}
-
-function renderFragmentConnections(preview: ReturnType<typeof buildFragmentPlacementPreview>) {
-    const simScale = simulationSpace.scale.x;
-
-    for (const connector of preview.connectors) {
-        const start = simulationToWorldSpace(connector.frameAtom.position);
-        const end = simulationToWorldSpace(connector.fragmentAtom.position);
-        const mid = start.clone().add(end).multiplyScalar(0.5);
-        const dir = end.clone().sub(start);
-        const len = dir.length();
-        const cyl = new THREE.Mesh(bondGeometry, fragmentConnectorMat);
-        cyl.position.copy(mid);
-        cyl.scale.set(Math.max(connector.frameAtom.scale, connector.fragmentAtom.scale) * BOND_SCALE * simScale, len, Math.max(connector.frameAtom.scale, connector.fragmentAtom.scale) * BOND_SCALE * simScale);
-        cyl.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
-        ghostGroup.add(cyl);
-    }
-
-    for (const hydrogen of preview.frameHydrogensToRemove) {
-        const sphere = new THREE.Mesh(atomGeometry, fragmentHydrogenRemovalMat);
-        sphere.position.copy(simulationToWorldSpace(hydrogen.position));
-        sphere.scale.setScalar(hydrogen.scale / 2 * simScale * 1.15);
-        guidelineGroup.add(sphere);
-    }
-}
-
-function renderGhostBond(
-    start: THREE.Vector3,
-    end: THREE.Vector3,
-    startColor: number,
-    endColor: number,
-    baseBondRadius: number,
-    order: number,
-) {
-    const mid = start.clone().add(end).multiplyScalar(0.5);
-    const dir = end.clone().sub(start);
-    const len = dir.length();
-    const halfLen = len / 2;
-    const bondRadius = getRenderedBondRadius(baseBondRadius, order);
-    const orientation = new THREE.Quaternion().setFromUnitVectors(
-        new THREE.Vector3(0, 1, 0), dir.clone().normalize()
-    );
-
-    const offsets = bondOrderOffsets(order, dir, bondRadius);
-    for (const offset of offsets) {
-        const midA = start.clone().add(mid).multiplyScalar(0.5);
-        const matA = ghostMaterial.clone();
-        matA.color = new THREE.Color(startColor);
-        const meshA = new THREE.Mesh(bondGeometry, matA);
-        meshA.position.copy(midA).add(offset);
-        meshA.scale.set(bondRadius, halfLen, bondRadius);
-        meshA.quaternion.copy(orientation);
-        ghostGroup.add(meshA);
-
-        const midB = mid.clone().add(end).multiplyScalar(0.5);
-        const matB = ghostMaterial.clone();
-        matB.color = new THREE.Color(endColor);
-        const meshB = new THREE.Mesh(bondGeometry, matB);
-        meshB.position.copy(midB).add(offset);
-        meshB.scale.set(bondRadius, halfLen, bondRadius);
-        meshB.quaternion.copy(orientation);
-        ghostGroup.add(meshB);
-    }
-}
-
-function placeSelectedFragment(controller: THREE.XRTargetRaySpace) {
-    if (!selectedFragmentTemplate) {
-        return;
-    }
-
-    const fragmentTransform = getControllerSimulationMatrix(controller);
-    if (!fragmentTransform) {
-        return;
-    }
-
-    const preview = buildFragmentPlacementPreview(molecule, selectedFragmentTemplate, fragmentTransform);
-    applyFragmentPlacementPreview(molecule, preview);
-    rebuildVisuals();
-}
-
-
-function getControllerWorldPos(controller: THREE.XRTargetRaySpace): THREE.Vector3 | null {
-    const pivot = controller.getObjectByName('pivot');
-    if (!pivot) return null;
-    return new THREE.Vector3().setFromMatrixPosition(pivot.matrixWorld);
-}
-
-function getControllerSimulationMatrix(controller: THREE.XRTargetRaySpace): THREE.Matrix4 | null {
-    const pivot = controller.getObjectByName('pivot');
-    if (!pivot) {
-        return null;
-    }
-
-    simulationSpace.updateMatrixWorld(true);
-    pivot.updateMatrixWorld(true);
-
-    const worldPosition = new THREE.Vector3().setFromMatrixPosition(pivot.matrixWorld);
-    const simulationPosition = worldToSimulationSpace(worldPosition);
-    const pivotWorldQuaternion = pivot.getWorldQuaternion(new THREE.Quaternion());
-    const simulationWorldQuaternion = simulationSpace.getWorldQuaternion(new THREE.Quaternion());
-    const simulationQuaternion = simulationWorldQuaternion.invert().multiply(pivotWorldQuaternion);
-
-    return new THREE.Matrix4().compose(
-        simulationPosition,
-        simulationQuaternion,
-        new THREE.Vector3(1, 1, 1)
-    );
-}
-
-// convert world position to simulation space 
-const _inverseMatrix = new THREE.Matrix4();
-function worldToSimulationSpace(worldPos: THREE.Vector3): THREE.Vector3 {
-    simulationSpace.updateMatrixWorld(true);
-    _inverseMatrix.copy(simulationSpace.matrixWorld).invert();
-    return worldPos.clone().applyMatrix4(_inverseMatrix);
-}
-
-// convert simulation space position to world
-function simulationToWorldSpace(simPos: THREE.Vector3): THREE.Vector3 {
-    simulationSpace.updateMatrixWorld(true);
-    return simPos.clone().applyMatrix4(simulationSpace.matrixWorld);
-}
-
-function onWindowResize() {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-}
-
-// --- MAIN ANIMATION LOOP ---
 
 let prevTime = 0;
 
-function animate(_timestamp: DOMHighResTimeStamp, frame?: XRFrame) {
+function animate(_timestamp: DOMHighResTimeStamp, frame?: XRFrame): void {
     const now = performance.now();
     const delta = (now - prevTime) / 1000;
     prevTime = now;
@@ -1052,7 +137,13 @@ function animate(_timestamp: DOMHighResTimeStamp, frame?: XRFrame) {
         const pos = getControllerWorldPos(ctrl);
         if (pos) {
             ctrl.userData.lastWorldPos = pos;
-            if (session && ctrl === controller1) updateGhostPreview(ctrl);
+            if (session && ctrl === controller1) {
+                if (isRotationDragging()) {
+                    updateRotationDrag(ctrl);
+                } else {
+                    updateGhostPreviewDispatch(ctrl);
+                }
+            }
             if (session && ctrl === controller2) updateDeleteHighlight(pos);
         }
     }
@@ -1060,7 +151,24 @@ function animate(_timestamp: DOMHighResTimeStamp, frame?: XRFrame) {
         ghostGroup.clear();
         guidelineGroup.clear();
         deleteHighlightGroup.clear();
+        clearRotationSelection();
     }
 
     renderer.render(scene, camera);
+}
+
+function updateGhostPreviewDispatch(controller: THREE.XRTargetRaySpace): void {
+    ghostGroup.clear();
+    guidelineGroup.clear();
+
+    const mode = getSelectedBuildMode();
+    if (mode === 'preset') {
+        updateFragmentGhostPreview(controller);
+    } else if (mode === 'bond') {
+        updateBondGhostPreview(controller);
+    } else if (mode === 'rotate') {
+        updateRotationPreview(controller);
+    } else {
+        updateAtomGhostPreview(controller);
+    }
 }

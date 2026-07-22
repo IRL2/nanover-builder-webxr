@@ -139,18 +139,6 @@ export class MolecularStructure {
         return bond;
     }
 
-    removeBondBetween(a: Atom, b: Atom): boolean {
-        const existingBond = this.getBondBetween(a, b);
-        if (!existingBond) {
-            return false;
-        }
-
-        this.removeBond(existingBond);
-        this.reindex();
-        return true;
-    }
-
-    // not used
     removeAtom(atom: Atom): void {
         // remove bonds first
         const bondsToRemove = [...atom.bonds];
@@ -224,11 +212,6 @@ export class MolecularStructure {
 
     appendStructure(structure: MolecularStructure, translation: THREE.Vector3 = new THREE.Vector3()): void {
         this.appendStructureWithMap(structure, translation);
-    }
-
-    replaceWith(structure: MolecularStructure): void {
-        this.clear();
-        this.appendStructure(structure);
     }
 
     static idealBondLength(a: Atom | string, b: Atom | string, order: number = 1): number {

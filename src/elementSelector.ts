@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { ELEMENTS } from './elementValues.js';
 import type { PresetCategory, PresetInfo } from './presetLibrary.js';
 
-export type BuildMode = 'atom' | 'preset' | 'bond';
+export type BuildMode = 'atom' | 'preset' | 'bond' | 'rotate';
 export type BondPlacementOrder = 1 | 2 | 3;
 
 type FocusSection = 'mode' | 'primary' | 'secondary';
@@ -264,8 +264,8 @@ function getFocusSections(): FocusSection[] {
 
 function getAvailableBuildModes(): BuildMode[] {
     return presetCategories.length > 0
-        ? ['atom', 'preset', 'bond']
-        : ['atom', 'bond'];
+        ? ['atom', 'preset', 'bond', 'rotate']
+        : ['atom', 'bond', 'rotate'];
 }
 
 function getModeLabel(mode: BuildMode): string {
@@ -276,6 +276,8 @@ function getModeLabel(mode: BuildMode): string {
             return 'Preset fragment';
         case 'bond':
             return 'Bond editing';
+        case 'rotate':
+            return 'Rigid body rotation';
     }
 }
 
@@ -337,7 +339,8 @@ function updateSelectionVisuals(): void {
     const isAtomMode = buildMode === 'atom';
     const isBondMode = buildMode === 'bond';
     const isPresetMode = buildMode === 'preset';
-    const usesWideLayout = isPresetMode || isBondMode;
+    const isRotateMode = buildMode === 'rotate';
+    const usesWideLayout = isPresetMode || isBondMode || isRotateMode;
     const elementData = ELEMENTS[element];
 
     rootContainer?.setProperties({
@@ -386,7 +389,7 @@ function updateSelectionVisuals(): void {
             text: `Preset: ${preset?.label ?? 'No preset selected'}`,
             color: 0xffffff,
         });
-    } else {
+    } else if (isBondMode) {
         atomOptionsRow?.setProperties({
             display: 'none',
             width: 0,
@@ -402,6 +405,24 @@ function updateSelectionVisuals(): void {
         secondaryText?.setProperties({
             fontSize: 4.6,
             text: 'Left: select 2 atoms, right: delete',
+            color: 0xcccccc,
+        });
+    } else {
+        atomOptionsRow?.setProperties({
+            display: 'none',
+            width: 0,
+            height: 0,
+            minWidth: 0,
+            minHeight: 0,
+            opacity: 0,
+        });
+        primaryText?.setProperties({
+            fontSize: 5.4,
+            text: 'Select an atom as pivot',
+        });
+        secondaryText?.setProperties({
+            fontSize: 4.6,
+            text: 'Grab a ring to rotate',
             color: 0xcccccc,
         });
     }

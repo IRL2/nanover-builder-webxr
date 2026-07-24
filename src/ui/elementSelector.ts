@@ -1,7 +1,7 @@
 import { Container, Text, reversePainterSortStable } from '@pmndrs/uikit';
 import * as THREE from 'three';
-import { ELEMENTS } from './elementValues.js';
-import type { PresetCategory, PresetInfo } from './presetLibrary.js';
+import { ELEMENTS } from '../core/elementValues.js';
+import type { PresetCategory, PresetInfo } from '../io/presetLibrary.js';
 
 export type BuildMode = 'atom' | 'preset' | 'bond' | 'rotate';
 export type BondPlacementOrder = 1 | 2 | 3;

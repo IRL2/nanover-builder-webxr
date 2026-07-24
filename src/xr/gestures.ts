@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { simulationSpace } from './state.js';
+import { simulationSpace } from '../state.js';
 import { controller1, controller2, getControllerWorldPos } from './xrInput.js';
 
 interface SqueezeGestureState {

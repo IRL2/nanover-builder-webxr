@@ -1,10 +1,10 @@
 import * as THREE from 'three';
-import { Atom, Bond } from './molecularData.js';
-import { simulationSpace, worldToSimulationSpace, simulationToWorldSpace, BOND_SCALE } from './state.js';
-import { getControllerWorldPos } from './xrInput.js';
-import { getSelectedBuildMode, setPresetStatus } from './elementSelector.js';
-import { rebuildVisuals, atomGroup, bondGroup } from './visuals/moleculeView.js';
-import { ghostGroup, guidelineGroup, renderGhostAtomHighlight, ghostMaterial } from './visuals/ghostView.js';
+import { Atom, Bond } from '../core/molecularData.js';
+import { simulationSpace, worldToSimulationSpace, simulationToWorldSpace, BOND_SCALE } from '../state.js';
+import { getControllerWorldPos } from '../xr/xrInput.js';
+import { getSelectedBuildMode, setPresetStatus } from '../ui/elementSelector.js';
+import { rebuildVisuals, atomGroup, bondGroup } from '../visuals/moleculeView.js';
+import { ghostGroup, guidelineGroup, renderGhostAtomHighlight, ghostMaterial } from '../visuals/ghostView.js';
 
 const GIZMO_RING_RADIUS = 0.12;
 const GIZMO_TUBE_RADIUS = 0.008;

@@ -1,10 +1,10 @@
 import * as THREE from 'three';
-import type { Atom, Bond } from './molecularData.js';
-import { molecule, atomGeometry, BOND_SCALE, BOND_SELECTION_MARGIN, worldToSimulationSpace } from './state.js';
-import { findNearestAtom, distanceToSegment } from './hitChecks.js';
-import { getSelectedBuildMode } from './elementSelector.js';
-import { buildBondSegments, getBondHitRadius } from './visuals/bondMesh.js';
-import { rebuildVisuals } from './visuals/moleculeView.js';
+import type { Atom, Bond } from '../core/molecularData.js';
+import { molecule, atomGeometry, BOND_SCALE, BOND_SELECTION_MARGIN, worldToSimulationSpace } from '../state.js';
+import { findNearestAtom, distanceToSegment } from '../core/hitChecks.js';
+import { getSelectedBuildMode } from '../ui/elementSelector.js';
+import { buildBondSegments, getBondHitRadius } from '../visuals/bondMesh.js';
+import { rebuildVisuals } from '../visuals/moleculeView.js';
 
 export const deleteHighlightGroup = new THREE.Group();
 

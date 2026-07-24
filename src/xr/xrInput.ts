@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 import { scene, renderer } from './scene.js';
-import { simulationSpace, worldToSimulationSpace } from './state.js';
-import { createElementSelector } from './elementSelector.js';
+import { simulationSpace, worldToSimulationSpace } from '../state.js';
+import { createElementSelector } from '../ui/elementSelector.js';
 
 export let controller1: THREE.XRTargetRaySpace;
 export let controller2: THREE.XRTargetRaySpace;

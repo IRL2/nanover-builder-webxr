@@ -1,4 +1,4 @@
-import { MolecularStructure } from './molecularData.js';
+import { MolecularStructure } from '../core/molecularData.js';
 
 export function generatePDB(molecule: MolecularStructure): string {
     const lines: string[] = [];

@@ -1,16 +1,16 @@
 import './style.css';
 import * as THREE from 'three';
 import GUI from 'lil-gui';
-import { downloadPDB } from './exportPDB.js';
-import { getSelectedBuildMode, updateElementSelector } from './elementSelector.js';
-import { scene, camera, renderer, setupScene } from './scene.js';
+import { downloadPDB } from './io/exportPDB.js';
+import { getSelectedBuildMode, updateElementSelector } from './ui/elementSelector.js';
+import { scene, camera, renderer, setupScene } from './xr/scene.js';
 import { molecule, simulationSpace } from './state.js';
-import { controller1, controller2, setupXRControllers, getControllerWorldPos } from './xrInput.js';
-import { checkStartTwoHandGesture, endTwoHandGesture, updateTwoHandGesture } from './gestures.js';
-import { placeAtom, updateAtomGhostPreview } from './atomTools.js';
-import { placeBondAtPosition, updateBondGhostPreview, clearBondPlacementSelection } from './bondTools.js';
-import { removeAtomAtPosition, removeBondAtPosition, updateDeleteHighlight, deleteHighlightGroup } from './deletion.js';
-import { setupPresetLibrary, refreshSelectedFragment, placeSelectedFragment, updateFragmentGhostPreview } from './fragmentTools.js';
+import { controller1, controller2, setupXRControllers, getControllerWorldPos } from './xr/xrInput.js';
+import { checkStartTwoHandGesture, endTwoHandGesture, updateTwoHandGesture } from './xr/gestures.js';
+import { placeAtom, updateAtomGhostPreview } from './tools/atomTools.js';
+import { placeBondAtPosition, updateBondGhostPreview, clearBondPlacementSelection } from './tools/bondTools.js';
+import { removeAtomAtPosition, removeBondAtPosition, updateDeleteHighlight, deleteHighlightGroup } from './tools/deletion.js';
+import { setupPresetLibrary, refreshSelectedFragment, placeSelectedFragment, updateFragmentGhostPreview } from './tools/fragmentTools.js';
 import {
     gizmoGroup,
     handleRotationSelectStart,
@@ -19,7 +19,7 @@ import {
     isRotationDragging,
     updateRotationPreview,
     clearRotationSelection,
-} from './rotationTools.js';
+} from './tools/rotationTools.js';
 import { atomGroup, bondGroup } from './visuals/moleculeView.js';
 import { ghostGroup, guidelineGroup } from './visuals/ghostView.js';
 

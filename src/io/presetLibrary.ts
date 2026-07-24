@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { ELEMENTS } from './elementValues.js';
-import { MolecularStructure } from './molecularData.js';
+import { ELEMENTS } from '../core/elementValues.js';
+import { MolecularStructure } from '../core/molecularData.js';
 
 export interface PresetInfo {
     id: string;

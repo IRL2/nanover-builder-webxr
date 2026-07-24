@@ -1,14 +1,14 @@
 import * as THREE from 'three';
-import type { MolecularStructure } from './molecularData.js';
-import { molecule, simulationSpace, atomGeometry, simulationToWorldSpace, BOND_SCALE } from './state.js';
-import { getSelectedBuildMode, getSelectedPreset, setPresetCatalog, setPresetStatus } from './elementSelector.js';
-import { loadPresetManifest, loadPresetStructure } from './presetLibrary.js';
+import type { MolecularStructure } from '../core/molecularData.js';
+import { molecule, simulationSpace, atomGeometry, simulationToWorldSpace, BOND_SCALE } from '../state.js';
+import { getSelectedBuildMode, getSelectedPreset, setPresetCatalog, setPresetStatus } from '../ui/elementSelector.js';
+import { loadPresetManifest, loadPresetStructure } from '../io/presetLibrary.js';
 import { applyFragmentPlacementPreview, buildFragmentPlacementPreview } from './fragmentPlacement.js';
 import type { FragmentPlacementPreview } from './fragmentPlacement.js';
-import { getControllerSimulationMatrix } from './xrInput.js';
-import { buildBondSegments } from './visuals/bondMesh.js';
-import { rebuildVisuals } from './visuals/moleculeView.js';
-import { ghostGroup, guidelineGroup, renderGhostStructure } from './visuals/ghostView.js';
+import { getControllerSimulationMatrix } from '../xr/xrInput.js';
+import { buildBondSegments } from '../visuals/bondMesh.js';
+import { rebuildVisuals } from '../visuals/moleculeView.js';
+import { ghostGroup, guidelineGroup, renderGhostStructure } from '../visuals/ghostView.js';
 
 let selectedFragmentTemplate: MolecularStructure | null = null;
 let presetLoadRequestId = 0;

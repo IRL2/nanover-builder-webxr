@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { MolecularStructure } from './molecularData.js';
+import { MolecularStructure } from './core/molecularData.js';
 
 export const molecule = new MolecularStructure();
 

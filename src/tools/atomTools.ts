@@ -1,14 +1,14 @@
 import * as THREE from 'three';
-import { Atom } from './molecularData.js';
-import { molecule, simulationSpace, atomGeometry, worldToSimulationSpace, simulationToWorldSpace, BOND_SCALE } from './state.js';
-import { calculateGuidelines, emptyBondNumber } from './guidelines.js';
-import type { GuidelineData } from './guidelines.js';
-import { biasedSortedBondOverlapForNew, sortedPositionsByDistance } from './hitChecks.js';
-import { getSelectedElement } from './elementSelector.js';
-import { getControllerWorldPos } from './xrInput.js';
-import { buildBondSegments } from './visuals/bondMesh.js';
-import { rebuildVisuals } from './visuals/moleculeView.js';
-import { ghostGroup, ghostMaterial, guideValidMat, guideInvalidMat, renderGuidelineSet } from './visuals/ghostView.js';
+import { Atom } from '../core/molecularData.js';
+import { molecule, simulationSpace, atomGeometry, worldToSimulationSpace, simulationToWorldSpace, BOND_SCALE } from '../state.js';
+import { calculateGuidelines, emptyBondNumber } from '../core/guidelines.js';
+import type { GuidelineData } from '../core/guidelines.js';
+import { biasedSortedBondOverlapForNew, sortedPositionsByDistance } from '../core/hitChecks.js';
+import { getSelectedElement } from '../ui/elementSelector.js';
+import { getControllerWorldPos } from '../xr/xrInput.js';
+import { buildBondSegments } from '../visuals/bondMesh.js';
+import { rebuildVisuals } from '../visuals/moleculeView.js';
+import { ghostGroup, ghostMaterial, guideValidMat, guideInvalidMat, renderGuidelineSet } from '../visuals/ghostView.js';
 
 export function placeAtom(worldPos: THREE.Vector3 | undefined): void {
     if (!worldPos) return;

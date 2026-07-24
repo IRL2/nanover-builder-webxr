@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Atom, MolecularStructure } from './molecularData.js';
+import { Atom, MolecularStructure } from '../core/molecularData.js';
 
 export interface FragmentConnector {
     frameAtom: Atom;

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import type { Atom, MolecularStructure } from '../molecularData.js';
-import type { GuidelineData } from '../guidelines.js';
+import type { Atom, MolecularStructure } from '../core/molecularData.js';
+import type { GuidelineData } from '../core/guidelines.js';
 import { simulationSpace, atomGeometry, guidelineGeometry, simulationToWorldSpace, BOND_SCALE } from '../state.js';
 import { buildBondSegmentsBicolor } from './bondMesh.js';
 

@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { Atom } from './molecularData.js';
-import type { Bond } from './molecularData.js';
-import { molecule, simulationSpace, BOND_SCALE, simulationToWorldSpace } from './state.js';
-import { getSelectedBondOrder, getSelectedBuildMode, setPresetStatus } from './elementSelector.js';
-import { calculateGuidelines } from './guidelines.js';
-import { atomGroup, rebuildVisuals } from './visuals/moleculeView.js';
-import { guideValidMat, renderGhostAtomHighlight, renderGhostBond, renderGuidelineSet } from './visuals/ghostView.js';
+import { Atom } from '../core/molecularData.js';
+import type { Bond } from '../core/molecularData.js';
+import { molecule, simulationSpace, BOND_SCALE, simulationToWorldSpace } from '../state.js';
+import { getSelectedBondOrder, getSelectedBuildMode, setPresetStatus } from '../ui/elementSelector.js';
+import { calculateGuidelines } from '../core/guidelines.js';
+import { atomGroup, rebuildVisuals } from '../visuals/moleculeView.js';
+import { guideValidMat, renderGhostAtomHighlight, renderGhostBond, renderGuidelineSet } from '../visuals/ghostView.js';
 
 interface BondPlacementCandidate {
     atomA: Atom;

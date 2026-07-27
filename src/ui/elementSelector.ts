@@ -418,11 +418,11 @@ function updateSelectionVisuals(): void {
         });
         primaryText?.setProperties({
             fontSize: 5.4,
-            text: 'Select an atom as pivot',
+            text: 'Select a bond to rotate',
         });
         secondaryText?.setProperties({
             fontSize: 4.6,
-            text: 'Grab a ring to rotate',
+            text: 'Grab a ring to rotate either side',
             color: 0xcccccc,
         });
     }

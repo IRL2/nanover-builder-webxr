@@ -3,31 +3,38 @@ import { Atom, Bond } from '../core/molecularData.js';
 import { simulationSpace, worldToSimulationSpace, simulationToWorldSpace, BOND_SCALE } from '../state.js';
 import { getControllerWorldPos } from '../xr/xrInput.js';
 import { getSelectedBuildMode, setPresetStatus } from '../ui/elementSelector.js';
-import { rebuildVisuals, atomGroup, bondGroup } from '../visuals/moleculeView.js';
-import { ghostGroup, guidelineGroup, renderGhostAtomHighlight, ghostMaterial } from '../visuals/ghostView.js';
+import { rebuildVisuals, bondGroup } from '../visuals/moleculeView.js';
+import { ghostGroup, guidelineGroup, ghostMaterial } from '../visuals/ghostView.js';
 
 const GIZMO_RING_RADIUS = 0.12;
 const GIZMO_TUBE_RADIUS = 0.008;
 
 export const gizmoGroup = new THREE.Group();
 
-const ringGeometry = new THREE.TorusGeometry(GIZMO_RING_RADIUS, GIZMO_TUBE_RADIUS, 16, 48);
-const ringMaterial = new THREE.MeshBasicMaterial({
-    color: 0xffcc33,
-    transparent: true,
-    opacity: 0.6,
-    depthTest: false,
-    depthWrite: false,
-});
-const gizmoRing = new THREE.Mesh(ringGeometry, ringMaterial);
-gizmoRing.renderOrder = 999;
-gizmoGroup.add(gizmoRing);
+function makeRing(color: number): THREE.Mesh {
+    const geom = new THREE.TorusGeometry(GIZMO_RING_RADIUS, GIZMO_TUBE_RADIUS, 16, 48);
+    const mat = new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.6,
+        depthTest: false,
+        depthWrite: false,
+    });
+    const ring = new THREE.Mesh(geom, mat);
+    ring.renderOrder = 999;
+    return ring;
+}
+
+const gizmoRingA = makeRing(0xffcc33);
+const gizmoRingB = makeRing(0xffcc33);
+gizmoGroup.add(gizmoRingA, gizmoRingB);
 gizmoGroup.visible = false;
 
-type Phase = 'idle' | 'awaiting-bond' | 'ready';
+type Phase = 'idle' | 'ready';
 
 let phase: Phase = 'idle';
-let selectedAtom: Atom | null = null;
+let selectedBond: Bond | null = null;
+let pivotAtom: Atom | null = null;
 let branchAtoms: Atom[] = [];
 let bondAxis: THREE.Vector3 | null = null;
 
@@ -38,24 +45,14 @@ let initialPositions: Map<Atom, THREE.Vector3> = new Map();
 const raycaster = new THREE.Raycaster();
 const rayRotation = new THREE.Matrix4();
 
+const UP = new THREE.Vector3(0, 0, 1);
+
 function getControllerRay(controller: THREE.XRTargetRaySpace): THREE.Raycaster {
     controller.updateMatrixWorld(true);
     rayRotation.identity().extractRotation(controller.matrixWorld);
     raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
     raycaster.ray.direction.set(0, 0, -1).applyMatrix4(rayRotation).normalize();
     return raycaster;
-}
-
-function findHoveredAtom(controller: THREE.XRTargetRaySpace): Atom | null {
-    simulationSpace.updateMatrixWorld(true);
-    atomGroup.updateMatrixWorld(true);
-    const ray = getControllerRay(controller);
-    for (const intersection of ray.intersectObjects(atomGroup.children, false)) {
-        if (intersection.object.userData.atom instanceof Atom) {
-            return intersection.object.userData.atom;
-        }
-    }
-    return null;
 }
 
 function findHoveredBond(controller: THREE.XRTargetRaySpace): Bond | null {
@@ -69,11 +66,13 @@ function findHoveredBond(controller: THREE.XRTargetRaySpace): Bond | null {
     return null;
 }
 
-function findHoveredRing(controller: THREE.XRTargetRaySpace): boolean {
+function findHoveredRing(controller: THREE.XRTargetRaySpace): THREE.Mesh | null {
+    if (!gizmoGroup.visible) return null;
     simulationSpace.updateMatrixWorld(true);
     gizmoGroup.updateMatrixWorld(true);
     const ray = getControllerRay(controller);
-    return ray.intersectObject(gizmoRing, false).length > 0;
+    const hits = ray.intersectObjects([gizmoRingA, gizmoRingB], false);
+    return hits.length > 0 ? (hits[0].object as THREE.Mesh) : null;
 }
 
 function findBranch(branchHead: Atom, fixedNeighbor: Atom): Atom[] {
@@ -95,64 +94,54 @@ function findBranch(branchHead: Atom, fixedNeighbor: Atom): Atom[] {
     return result;
 }
 
-function setGizmoToBond(atom: Atom, neighbor: Atom): void {
+function placeRing(ring: THREE.Mesh, atom: Atom, neighbor: Atom): void {
     const axis = neighbor.position.clone().sub(atom.position);
     const len = axis.length();
     if (len < 1e-9) {
-        gizmoGroup.visible = false;
+        ring.visible = false;
         return;
     }
-    bondAxis = axis.normalize();
-    gizmoGroup.position.copy(atom.position);
-    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), bondAxis);
-    gizmoGroup.quaternion.copy(q);
-    gizmoGroup.visible = true;
+    axis.normalize();
+    ring.position.copy(atom.position);
+    ring.quaternion.copy(new THREE.Quaternion().setFromUnitVectors(UP, axis));
+    ring.visible = true;
 }
 
-function selectAtom(atom: Atom): void {
-    selectedAtom = atom;
-    branchAtoms = [];
-    bondAxis = null;
-    gizmoGroup.visible = false;
-
-    if (atom.bonds.length === 1) {
-        const bond = atom.bonds[0];
-        const neighbor = bond.a === atom ? bond.b : bond.a;
-        branchAtoms = findBranch(atom, neighbor);
-        setGizmoToBond(atom, neighbor);
-        phase = 'ready';
-        setPresetStatus('Grab the ring to rotate the branch');
-    } else if (atom.bonds.length === 0) {
-        phase = 'idle';
-        setPresetStatus('Atom has no bonds — pick another');
-        selectedAtom = null;
-    } else {
-        phase = 'awaiting-bond';
-        setPresetStatus('Pick one of the atom\'s bonds as the axis');
-    }
+function setRingOpacity(opacity: number): void {
+    (gizmoRingA.material as THREE.MeshBasicMaterial).opacity = opacity;
+    (gizmoRingB.material as THREE.MeshBasicMaterial).opacity = opacity;
 }
 
 function selectBond(bond: Bond): void {
-    if (!selectedAtom) return;
-    const neighbor = bond.a === selectedAtom ? bond.b : bond.a;
-    branchAtoms = findBranch(selectedAtom, neighbor);
-    setGizmoToBond(selectedAtom, neighbor);
+    selectedBond = bond;
+    pivotAtom = null;
+    branchAtoms = [];
+    bondAxis = null;
+
+    gizmoRingA.userData.atom = bond.a;
+    gizmoRingB.userData.atom = bond.b;
+    placeRing(gizmoRingA, bond.a, bond.b);
+    placeRing(gizmoRingB, bond.b, bond.a);
+
+    gizmoGroup.visible = true;
+    setRingOpacity(0.6);
     phase = 'ready';
-    setPresetStatus('Grab the ring to rotate the branch');
+    setPresetStatus('Grab either ring to rotate that side');
 }
 
 export function clearRotationSelection(): void {
     phase = 'idle';
-    selectedAtom = null;
+    selectedBond = null;
+    pivotAtom = null;
     branchAtoms = [];
     bondAxis = null;
     isDragging = false;
     dragStartControllerSimPos = null;
     initialPositions = new Map();
     gizmoGroup.visible = false;
-    ringMaterial.opacity = 0.6;
+    setRingOpacity(0.6);
     if (getSelectedBuildMode() === 'rotate') {
-        setPresetStatus('Point at an atom to select');
+        setPresetStatus('Point at a bond to select');
     }
 }
 
@@ -162,7 +151,18 @@ export function isRotationDragging(): boolean {
 
 export function handleRotationSelectStart(controller: THREE.XRTargetRaySpace): void {
     if (phase !== 'ready' || isDragging) return;
-    if (!findHoveredRing(controller)) return;
+    const hoveredRing = findHoveredRing(controller);
+    if (!hoveredRing) return;
+    const atom = hoveredRing.userData.atom as Atom | undefined;
+    const bond = selectedBond;
+    if (!atom || !bond) return;
+
+    const fixedNeighbor = bond.a === atom ? bond.b : bond.a;
+    const axis = fixedNeighbor.position.clone().sub(atom.position);
+    if (axis.lengthSq() < 1e-18) return;
+    bondAxis = axis.normalize();
+    pivotAtom = atom;
+    branchAtoms = findBranch(atom, fixedNeighbor);
 
     const worldPos = getControllerWorldPos(controller);
     if (!worldPos) return;
@@ -170,12 +170,15 @@ export function handleRotationSelectStart(controller: THREE.XRTargetRaySpace): v
     isDragging = true;
     dragStartControllerSimPos = worldToSimulationSpace(worldPos);
     initialPositions = new Map();
-    for (const atom of branchAtoms) {
-        initialPositions.set(atom, atom.position.clone());
+    for (const a of branchAtoms) {
+        initialPositions.set(a, a.position.clone());
     }
-    ringMaterial.opacity = 1.0;
+    // Clear any lingering bond hover highlight so it doesn't persist through the drag.
     ghostGroup.clear();
     guidelineGroup.clear();
+    // Only the grabbed ring goes full-bright; the other stays dim.
+    setRingOpacity(0.25);
+    (hoveredRing.material as THREE.MeshBasicMaterial).opacity = 1.0;
     setPresetStatus('Rotating branch — release to commit');
 }
 
@@ -184,27 +187,21 @@ export function handleRotationSelectEnd(controller: THREE.XRTargetRaySpace): voi
         isDragging = false;
         dragStartControllerSimPos = null;
         initialPositions = new Map();
-        ringMaterial.opacity = 0.6;
-        setPresetStatus('Rotation committed — grab the ring or pick another atom');
-        return;
-    }
-
-    if (phase === 'awaiting-bond') {
-        const bond = findHoveredBond(controller);
-        if (bond && selectedAtom && selectedAtom.bonds.includes(bond)) {
-            selectBond(bond);
-            return;
+        setRingOpacity(0.6);
+        if (selectedBond) {
+            placeRing(gizmoRingA, selectedBond.a, selectedBond.b);
+            placeRing(gizmoRingB, selectedBond.b, selectedBond.a);
         }
-        clearRotationSelection();
+        setPresetStatus('Grab either ring to rotate that side');
         return;
     }
 
-    const hovered = findHoveredAtom(controller);
-    if (hovered) {
-        if (hovered === selectedAtom) {
+    const hoveredBond = findHoveredBond(controller);
+    if (hoveredBond) {
+        if (hoveredBond === selectedBond) {
             clearRotationSelection();
         } else {
-            selectAtom(hovered);
+            selectBond(hoveredBond);
         }
         return;
     }
@@ -213,13 +210,13 @@ export function handleRotationSelectEnd(controller: THREE.XRTargetRaySpace): voi
 }
 
 export function updateRotationDrag(controller: THREE.XRTargetRaySpace): void {
-    if (!isDragging || !selectedAtom || !bondAxis || !dragStartControllerSimPos) return;
+    if (!isDragging || !pivotAtom || !bondAxis || !dragStartControllerSimPos) return;
 
     const worldPos = getControllerWorldPos(controller);
     if (!worldPos) return;
 
     const currentSimPos = worldToSimulationSpace(worldPos);
-    const pivot = selectedAtom.position;
+    const pivot = pivotAtom.position;
 
     const v0 = dragStartControllerSimPos.clone().sub(pivot);
     const v1 = currentSimPos.clone().sub(pivot);
@@ -244,7 +241,6 @@ export function updateRotationDrag(controller: THREE.XRTargetRaySpace): void {
     }
 
     rebuildVisuals();
-    gizmoGroup.position.copy(selectedAtom.position);
 }
 
 export function updateRotationPreview(controller: THREE.XRTargetRaySpace): void {
@@ -253,49 +249,41 @@ export function updateRotationPreview(controller: THREE.XRTargetRaySpace): void 
 
     if (isDragging) return;
 
-    ringMaterial.opacity = 0.6;
+    setRingOpacity(0.6);
 
     if (phase === 'idle') {
-        const hovered = findHoveredAtom(controller);
-        if (hovered) renderGhostAtomHighlight(hovered);
-        return;
-    }
-
-    if (phase === 'awaiting-bond' && selectedAtom) {
-        renderGhostAtomHighlight(selectedAtom);
         const hoveredBond = findHoveredBond(controller);
-        if (hoveredBond && selectedAtom.bonds.includes(hoveredBond)) {
-            highlightBond(hoveredBond);
-        }
+        if (hoveredBond) highlightBond(hoveredBond);
         return;
     }
 
     if (phase === 'ready') {
-        if (findHoveredRing(controller)) {
-            ringMaterial.opacity = 1.0;
+        const hoveredRing = findHoveredRing(controller);
+        if (hoveredRing) {
+            (hoveredRing.material as THREE.MeshBasicMaterial).opacity = 1.0;
         }
-        const hovered = findHoveredAtom(controller);
-        if (hovered && hovered !== selectedAtom) {
-            renderGhostAtomHighlight(hovered);
+        const hoveredBond = findHoveredBond(controller);
+        if (hoveredBond && hoveredBond !== selectedBond) {
+            highlightBond(hoveredBond);
         }
     }
 }
 
 function highlightBond(bond: Bond): void {
-    if (!selectedAtom) return;
-    const neighbor = bond.a === selectedAtom ? bond.b : bond.a;
-    const start = simulationToWorldSpace(selectedAtom.position);
-    const end = simulationToWorldSpace(neighbor.position);
+    const start = simulationToWorldSpace(bond.a.position);
+    const end = simulationToWorldSpace(bond.b.position);
     const mat = ghostMaterial.clone();
     mat.color = new THREE.Color(0xffcc33);
     const geom = new THREE.CylinderGeometry(1, 1, 1, 8);
     const mid = start.clone().add(end).multiplyScalar(0.5);
     const dir = end.clone().sub(start);
     const len = dir.length();
-    const radius = Math.max(selectedAtom.scale, neighbor.scale) * BOND_SCALE * 1.5;
+    if (len < 1e-9) return;
+    const radius = Math.max(bond.a.scale, bond.b.scale) * BOND_SCALE * 1.5;
     const cyl = new THREE.Mesh(geom, mat);
     cyl.position.copy(mid);
     cyl.scale.set(radius, len, radius);
     cyl.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
     ghostGroup.add(cyl);
 }
+

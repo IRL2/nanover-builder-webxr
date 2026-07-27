@@ -25,9 +25,31 @@ function makeRing(color: number): THREE.Mesh {
     return ring;
 }
 
+
+const DISK_RADIUS = GIZMO_RING_RADIUS * 1.15;
+const DISK_HALF_HEIGHT = 0.012;
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
+
+function makeCollider(): THREE.Mesh {
+    const geom = new THREE.CylinderGeometry(DISK_RADIUS, DISK_RADIUS, DISK_HALF_HEIGHT * 2, 24, 1);
+    const mat = new THREE.MeshBasicMaterial({
+        transparent: true,
+        opacity: 0,
+        depthTest: false,
+        depthWrite: false,
+    });
+    return new THREE.Mesh(geom, mat);
+}
+
 const gizmoRingA = makeRing(0xffcc33);
 const gizmoRingB = makeRing(0xffcc33);
-gizmoGroup.add(gizmoRingA, gizmoRingB);
+const colliderA = makeCollider();
+const colliderB = makeCollider();
+gizmoRingA.userData.partner = null;
+gizmoRingB.userData.partner = null;
+colliderA.userData.ring = gizmoRingA;
+colliderB.userData.ring = gizmoRingB;
+gizmoGroup.add(gizmoRingA, gizmoRingB, colliderA, colliderB);
 gizmoGroup.visible = false;
 
 type Phase = 'idle' | 'ready';
@@ -71,8 +93,10 @@ function findHoveredRing(controller: THREE.XRTargetRaySpace): THREE.Mesh | null 
     simulationSpace.updateMatrixWorld(true);
     gizmoGroup.updateMatrixWorld(true);
     const ray = getControllerRay(controller);
-    const hits = ray.intersectObjects([gizmoRingA, gizmoRingB], false);
-    return hits.length > 0 ? (hits[0].object as THREE.Mesh) : null;
+    const hits = ray.intersectObjects([colliderA, colliderB], false);
+    if (hits.length === 0) return null;
+    const collider = hits[0].object as THREE.Mesh;
+    return (collider.userData.ring as THREE.Mesh) ?? null;
 }
 
 function findBranch(branchHead: Atom, fixedNeighbor: Atom): Atom[] {
@@ -94,17 +118,24 @@ function findBranch(branchHead: Atom, fixedNeighbor: Atom): Atom[] {
     return result;
 }
 
-function placeRing(ring: THREE.Mesh, atom: Atom, neighbor: Atom): void {
+function placeRingWithCollider(ring: THREE.Mesh, collider: THREE.Mesh, atom: Atom, neighbor: Atom): void {
     const axis = neighbor.position.clone().sub(atom.position);
     const len = axis.length();
-    if (len < 1e-9) {
+    const degenerate = len < 1e-9;
+    if (degenerate) {
         ring.visible = false;
+        collider.visible = false;
         return;
     }
     axis.normalize();
     ring.position.copy(atom.position);
     ring.quaternion.copy(new THREE.Quaternion().setFromUnitVectors(UP, axis));
     ring.visible = true;
+    // Collider cylinder axis is Y by default — orient Y along the bond.
+    collider.position.copy(atom.position);
+    collider.quaternion.copy(new THREE.Quaternion().setFromUnitVectors(Y_AXIS, axis));
+    collider.userData.atom = atom;
+    collider.visible = true;
 }
 
 function setRingOpacity(opacity: number): void {
@@ -120,8 +151,8 @@ function selectBond(bond: Bond): void {
 
     gizmoRingA.userData.atom = bond.a;
     gizmoRingB.userData.atom = bond.b;
-    placeRing(gizmoRingA, bond.a, bond.b);
-    placeRing(gizmoRingB, bond.b, bond.a);
+    placeRingWithCollider(gizmoRingA, colliderA, bond.a, bond.b);
+    placeRingWithCollider(gizmoRingB, colliderB, bond.b, bond.a);
 
     gizmoGroup.visible = true;
     setRingOpacity(0.6);
@@ -189,8 +220,8 @@ export function handleRotationSelectEnd(controller: THREE.XRTargetRaySpace): voi
         initialPositions = new Map();
         setRingOpacity(0.6);
         if (selectedBond) {
-            placeRing(gizmoRingA, selectedBond.a, selectedBond.b);
-            placeRing(gizmoRingB, selectedBond.b, selectedBond.a);
+            placeRingWithCollider(gizmoRingA, colliderA, selectedBond.a, selectedBond.b);
+            placeRingWithCollider(gizmoRingB, colliderB, selectedBond.b, selectedBond.a);
         }
         setPresetStatus('Grab either ring to rotate that side');
         return;
